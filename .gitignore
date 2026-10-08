@@ -1,0 +1,27 @@
+# Rust
+/target/
+**/*.rs.bk
+
+# Nix bootstrap + cache
+.verilog-ide-bootstrap/
+.verilog-ide-nix-ready
+.vfox/
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+*.o
+*.vcd
+*.fst
+vendor/**/target/
+
+# Local data
+.verilog-ide-data/
+*.log
+.mingw-shim/

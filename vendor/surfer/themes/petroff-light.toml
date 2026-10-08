@@ -1,0 +1,66 @@
+foreground = "343434"
+alt_text_color = "dddddd"
+border_color = "282b2d"
+selected_elements_colors = { background = "adadad", foreground = "343434" }
+canvas_colors = { background = "ffffff", alt_background = "efefef", foreground = "343434" }
+primary_ui_color = { background = "f3f3f3", foreground = "343434" }
+secondary_ui_color = { background = "f3f3f3", foreground = "2c2c2c" }
+accent_info = { background = "007acc", foreground = "f3f3f3" }
+accent_warn = { background = "32302f", foreground = "d4d4d4" }
+accent_error = { background = "32302f", foreground = "d4d4d4" }
+
+variable_default = "3f90da"
+variable_undef = "bd1f01"
+variable_highimp = "e76b00"
+variable_dontcare = "94a4a2"
+variable_weak = "b9ac70"
+cursor = { color="ffa90e", width=2 }
+gesture = { color="ffa90e", width=2 }
+
+[colors]
+Blue = "3f90da"
+Pop = "ffa90e"
+Red = "bd1f01"
+Gray = "94a4a2"
+Purple = "832db6"
+Brown = "a96b59"
+Orange = "e76b00"
+Tan = "b9ac70"
+Dim = "717581"
+Sky = "92dadb"
+
+# Scope icon colors - Petroff palette for light background
+[scope_icons.colors]
+module = "3f90da"
+task = "e76b00"
+function = "832db6"
+begin = "4a9c4a"
+fork = "bd1f01"
+generate = "3f90da"
+struct = "2a8a8a"
+union = "2a8a8a"
+class = "c43c7c"
+interface = "6a8b4a"
+package = "c49000"
+program = "a96b59"
+vhdl_architecture = "3f90da"
+vhdl_procedure = "e76b00"
+vhdl_function = "832db6"
+vhdl_record = "2a8a8a"
+vhdl_process = "4a9c4a"
+vhdl_block = "717581"
+vhdl_for_generate = "3f90da"
+vhdl_if_generate = "3f90da"
+vhdl_generate = "3f90da"
+vhdl_package = "c49000"
+ghw_generic = "717581"
+vhdl_array = "6a4d9a"
+unknown = "717581"
+
+# Variable icon colors - Petroff palette for light background
+[variable_icons.colors]
+wire = "4a9c4a"
+bus = "3f90da"
+string = "e76b00"
+event = "c43c7c"
+other = "832db6"

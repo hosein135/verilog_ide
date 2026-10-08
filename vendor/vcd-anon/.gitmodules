@@ -1,0 +1,3 @@
+[submodule "wellen"]
+	path = wellen
+	url = https://github.com/ekiwi/wellen.git

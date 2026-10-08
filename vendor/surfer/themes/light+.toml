@@ -1,0 +1,73 @@
+# VSCode Light+ theme
+
+foreground = "343434"
+border_color = "282b2d"
+selected_elements_colors = { background = "adadad", foreground = "343434" }
+canvas_colors = { background = "ffffff", alt_background = "efefef", foreground = "343434" }
+primary_ui_color = { background = "f3f3f3", foreground = "343434" }
+secondary_ui_color = { background = "f3f3f3", foreground = "2c2c2c" }
+accent_info = { background = "007acc", foreground = "f3f3f3" }
+accent_warn = { background = "32302f", foreground = "d4d4d4" }
+accent_error = { background = "32302f", foreground = "d4d4d4" }
+variable_default = "1f6102"
+variable_undefined = "46000c"
+# Convention dictates this being yellow, but yellow is super hard
+# to make visible on a white background, so we'll make it Purple
+variable_highimp = "46175e"
+variable_dontcare = "17265e"
+variable_weak = "808080"
+waveform_opacity = 0.5
+wide_opacity = 0.2
+cursor = { color="b63935", width=2 }
+linewidth = 2
+highlight_background = "DAE8FF"
+
+[colors]
+Green = "6a9955"
+Red = "f44747"
+Yellow = "ffd602"
+Blue = "569cd6"
+Pink = "c586c0"
+Orange = "ce9178"
+Gray = "808080"
+Violet = "646695"
+
+# Scope icon colors - darker colors for light background
+[scope_icons.colors]
+module = "0277BD"
+task = "E65100"
+function = "7B1FA2"
+begin = "2E7D32"
+fork = "C62828"
+generate = "1565C0"
+struct = "00838F"
+union = "00838F"
+class = "AD1457"
+interface = "558B2F"
+package = "F9A825"
+program = "5D4037"
+vhdl_architecture = "0277BD"
+vhdl_procedure = "E65100"
+vhdl_function = "7B1FA2"
+vhdl_record = "00838F"
+vhdl_process = "2E7D32"
+vhdl_block = "546E7A"
+vhdl_for_generate = "1565C0"
+vhdl_if_generate = "1565C0"
+vhdl_generate = "1565C0"
+vhdl_package = "F9A825"
+ghw_generic = "607D8B"
+vhdl_array = "6A1B9A"
+unknown = "616161"
+
+# Variable icon colors - darker colors for light background
+[variable_icons.colors]
+wire = "2E7D32"
+bus = "1565C0"
+string = "E65100"
+event = "AD1457"
+other = "7B1FA2"
+
+[ticks]
+style = { color="c9c9c9", width=2 }
+density = 1

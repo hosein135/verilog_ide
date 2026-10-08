@@ -1,0 +1,25 @@
+[package]
+name = "wave2saif"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.81"
+license = "(EUPL-1.2)"
+
+[dependencies]
+camino = "1.1.10"
+clap = { version = "4.5.40", features = ["derive"] }
+log = "0.4.27"
+nesty = "0.2.0"
+num-bigint = "0.4.6"
+num-traits = "0.2"
+simple-eyre = "0.3.1"
+simplelog = "0.12.2"
+time = { version = "0.3.41", default-features = false, features = ["local-offset"] }
+# Local: 0.25 matches the IDE's wellen so `cargo build` compiles one copy.
+# Upstream pins 0.17.1. ScopeOrVar/iter_vars were adapted in src/lib.rs.
+wellen = "0.25"
+
+[profile.release]
+opt-level = 3 # fast
+lto = true
+debug = true

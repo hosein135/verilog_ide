@@ -1,0 +1,62 @@
+[package]
+name = "verilog-ide"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.92"
+description = "Desktop IDE for Verilog HDL and testbenches"
+license = "MIT"
+authors = ["Verilog IDE"]
+
+[dependencies]
+anyhow = "1"
+# Vendored at vendor/xezim (https://github.com/aionhw/xezim @ 265595e6).
+xezim = { path = "vendor/xezim" }
+# Wellen is the VCD/FST/GHW engine used by Surfer
+# (vendored at vendor/surfer, https://gitlab.com/surfer-project/surfer @ v0.7.0).
+wellen = { version = "0.25", default-features = false }
+# Vendored at vendor/vcd-anon (https://gitlab.com/surfer-project/vcd-anon @ 519eb8b5).
+vcd-anon = { path = "vendor/vcd-anon" }
+# Vendored at vendor/wave2saif (https://gitlab.com/surfer-project/wave2saif @ d89109c7).
+wave2saif = { path = "vendor/wave2saif" }
+iced = { version = "0.13.1", default-features = false, features = [
+    "tiny-skia",
+    "fira-sans",
+    "tokio",
+    "advanced",
+    "highlighter",
+] }
+rfd = { version = "0.15", default-features = false, features = ["tokio", "xdg-portal"] }
+tokio = { version = "1", features = ["rt"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+walkdir = "2"
+
+[workspace]
+resolver = "2"
+# The root package is a member because this file defines `[workspace]`.
+# Do not also list `"."` here: Cargo treats that entry as a prefix of every
+# path in the repo, which disables `exclude` and pulls vendored crates in as
+# members. Their `[profile]` tables are then ignored.
+# Vendored path deps compile when something uses them; they are not
+# workspace members, so `--workspace` does not select them.
+exclude = [
+    "vendor/xezim",
+    "vendor/xezim-core",
+    "vendor/surfer",
+    "vendor/vcd-anon",
+    "vendor/wave2saif",
+]
+
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+
+# xezim's Cargo.toml still names the git URL; point it at the vendored core
+# so `cargo build` does not fetch GitHub.
+[patch."https://github.com/aionhw/xezim-core.git"]
+xezim-core = { path = "vendor/xezim-core" }
+sv-parser = { path = "vendor/xezim-core/xezim-parser" }

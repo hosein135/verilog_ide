@@ -1,0 +1,223 @@
+image: rust:latest
+
+variables:
+    CARGO_HOME: $CI_PROJECT_DIR/cargo
+    FF_ENABLE_BASH_EXIT_CODE_CHECK: "true"
+    GIT_SUBMODULE_STRATEGY: normal
+    EPHEMERAL_BRANCHES_PATH: preview # subpath where previews of pages will be built
+    PACKAGE_REGISTRY_URL: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/wave2saif/${CI_COMMIT_TAG}"
+
+stages:
+    - build
+    - upload
+    - release
+
+default:
+  cache:
+    key:
+      # New cache if Cargo.lock changes (when adding/updating dependencies)
+      files:
+        - Cargo.lock
+      # One cache per job
+      prefix: "$CI_JOB_NAME"
+    paths:
+      - target
+      - $CARGO_HOME
+
+workflow:
+  rules:
+    - when: always
+  auto_cancel:
+    on_new_commit: interruptible
+
+.build-dependencies:
+  interruptible: true
+
+.snapshots:
+  extends: .build-dependencies
+  artifacts:
+    paths:
+      - snapshots
+    expire_in: 1h
+    when: on_failure
+
+clippy:
+    stage: build
+    extends: .build-dependencies
+    before_script:
+        - rustup component add clippy
+        - cargo install gitlab_clippy
+    script:
+      - cargo -V
+      - cargo clippy --color=always
+    after_script:
+        - cargo clippy --message-format=json | $CARGO_HOME/bin/gitlab-clippy > gl-code-quality-report.json
+    artifacts:
+        reports:
+            codequality: gl-code-quality-report.json
+        expire_in: 1 week
+
+cargo_about:
+    stage: build
+    extends: .build-dependencies
+    before_script:
+        - cargo install --locked cargo-about
+    script:
+        - cargo about generate about.hbs -o /dev/null
+
+build-oldest-supported:
+    # This version should match rust-version in Cargo.toml
+    image: rust:1.81
+    stage: build
+    extends: .snapshots
+    script:
+        - rustc -V
+        - cargo -V
+        - cargo build --color=always --locked
+
+build-beta:
+    image: "instrumentisto/rust:beta"
+    stage: build
+    extends: .snapshots
+    script:
+        - rustc -V
+        - cargo -V
+        - cargo build --color=always --locked
+    allow_failure: true
+
+build-nightly:
+    image: "rustlang/rust:nightly"
+    stage: build
+    extends: .snapshots
+    script:
+        - rustc -V
+        - cargo -V
+        - cargo build --color=always --locked
+    allow_failure: true
+
+pre-commit:
+    stage: build
+    variables:
+      PRE_COMMIT_HOME: ${CI_PROJECT_DIR}/.cache/pre-commit
+    cache:
+      paths:
+        - ${PRE_COMMIT_HOME}
+    before_script:
+        - apt update -y
+        - apt install python3 python3.11-venv -y
+        - python3 -m venv pc
+        - source ./pc/bin/activate
+        - python3 -m pip install pre-commit
+        - pre-commit install
+        - rustup component add rustfmt
+        - rustup component add clippy
+        - git fetch origin ${CI_DEFAULT_BRANCH}
+    script:
+        - SKIP=cargo-test,cargo-check pre-commit run --from-ref origin/${CI_DEFAULT_BRANCH} --to-ref HEAD
+    interruptible: true
+
+linux_build:
+    stage: build
+    script:
+        - apt-get update -y
+        - apt-get install -y zip
+        - git fetch --tags
+        - rustc -V
+        - cargo -V
+        - cargo build --release --locked --timings --color always
+        - mkdir dist
+        - cp target/release/wave2saif dist/wave2saif
+        - cd dist
+        - zip ../wave2saif_linux.zip wave2saif
+    artifacts:
+        paths:
+            - wave2saif_linux.zip
+            - target/cargo-timings/*.html
+        expire_in: 1 week
+    interruptible: true
+
+windows_build:
+    stage: build
+    script:
+        - apt-get update -y
+        - apt-get install -y mingw-w64 zip
+        - git fetch --tags
+        - rustc -V
+        - cargo -V
+        - rustup target add x86_64-pc-windows-gnu
+        - cargo build --target x86_64-pc-windows-gnu --release --locked --color always --timings
+        - mkdir dist
+        - cp target/x86_64-pc-windows-gnu/release/wave2saif.exe dist/wave2saif.exe
+        - cd dist
+        - zip ../wave2saif_win.zip wave2saif.exe
+    artifacts:
+        paths:
+            - wave2saif_win.zip
+            - target/cargo-timings/*.html
+        expire_in: 1 week
+    interruptible: true
+
+macos-aarch64_build:
+    stage: build
+    variables:
+        HOMEBREW_NO_AUTO_UPDATE: 1
+        HOMEBREW_NO_ENV_HINTS: 1
+        HOMEBREW_NO_INSTALL_CLEANUP: 1
+    tags:
+        - saas-macos-medium-m1
+    image: macos-14-xcode-15
+    before_script:
+        - brew install rustup-init
+        - rustup install 1.82
+        - rustup override set 1.82
+        - cargo -V
+        - rustc -V
+        - git fetch --tags
+    script:
+        - cargo build --release --locked --color always --timings
+        - ls -alrt target/release/wave2saif
+        - mkdir dist
+        - cp target/release/wave2saif dist/wave2saif
+        - cd dist
+        - zip ../wave2saif_macos-aarch64.zip wave2saif
+    artifacts:
+        paths:
+            - wave2saif_macos-aarch64.zip
+            - target/cargo-timings/*.html
+        expire_in: 1 week
+  # macOS runners are not available for "normal" GitLab users, but we are
+  # part of the open source program.
+    rules:
+        - if: '$CI_PROJECT_NAMESPACE == "surfer-project"'
+    interruptible: true
+
+upload:
+  dependencies: [windows_build, linux_build, macos-aarch64_build]
+  needs: [windows_build, linux_build, macos-aarch64_build]
+  stage: upload
+  image: curlimages/curl:latest
+  rules:
+    - if: $CI_COMMIT_TAG
+  script:
+    - |
+      curl --header "JOB-TOKEN: ${CI_JOB_TOKEN}" --upload-file wave2saif_win.zip "${PACKAGE_REGISTRY_URL}/wave2saif_win_${CI_COMMIT_TAG}.zip"
+    - |
+      curl --header "JOB-TOKEN: ${CI_JOB_TOKEN}" --upload-file wave2saif_linux.zip "${PACKAGE_REGISTRY_URL}/wave2saif_linux_${CI_COMMIT_TAG}.zip"
+    - |
+      curl --header "JOB-TOKEN: ${CI_JOB_TOKEN}" --upload-file wave2saif_macos-aarch64.zip "${PACKAGE_REGISTRY_URL}/wave2saif_macos-aarch64_${CI_COMMIT_TAG}.zip"
+
+release:
+  # Caution, as of 2021-02-02 these assets links require a login, see:
+  # https://gitlab.com/gitlab-org/gitlab/-/issues/299384
+  dependencies: [upload]
+  needs: [upload]
+  stage: release
+  image: registry.gitlab.com/gitlab-org/release-cli:latest
+  rules:
+    - if: $CI_COMMIT_TAG
+  script:
+    - |
+      release-cli create --name "Release $CI_COMMIT_TAG" --tag-name $CI_COMMIT_TAG \
+        --assets-link "{\"name\":\"wave2saif_win_${CI_COMMIT_TAG}.zip\",\"url\":\"${PACKAGE_REGISTRY_URL}/surfer_win_${CI_COMMIT_TAG}.zip\"}" \
+        --assets-link "{\"name\":\"wave2saif_linux_${CI_COMMIT_TAG}.zip\",\"url\":\"${PACKAGE_REGISTRY_URL}/surfer_linux_${CI_COMMIT_TAG}.zip\"}" \
+        --assets-link "{\"name\":\"wave2saif_macos-aarch64_${CI_COMMIT_TAG}.zip\",\"url\":\"${PACKAGE_REGISTRY_URL}/surfer_macos-aarch64_${CI_COMMIT_TAG}.zip\"}"

@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+env:
+  # Surface a panic location instead of just "exit code 101" in the job log.
+  RUST_BACKTRACE: 1
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # xezim-core is a git dependency in Cargo.toml (cargo clones it), but
+      # Cargo.lock is gitignored so it tracks a moving main — the build cache
+      # key still needs the core commit to avoid reusing a tree built against
+      # a different core.
+      - name: Resolve xezim-core HEAD
+        run: |
+          echo "CORE_SHA=$(git ls-remote https://github.com/aionhw/xezim-core.git refs/heads/main | cut -f1)" >> "$GITHUB_ENV"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      # Registry/git downloads are content-addressed, so sharing them across
+      # commits is safe and a loose key is what we want.
+      - name: Cache cargo registry
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargoreg-${{ hashFiles('**/Cargo.toml') }}
+          restore-keys: ${{ runner.os }}-cargoreg-
+
+      # `target/` is NOT safe to share the same way. Cargo.lock is gitignored,
+      # so the old `hashFiles('**/Cargo.lock')` expanded to an EMPTY hash and
+      # every commit restored one shared `target/` — one built against whatever
+      # ../xezim-core happened to be at the time, since that repo is cloned from
+      # a moving main and no cache key ever covered it. Key on the manifests AND
+      # the core commit, with no restore-keys, so a tree built against a
+      # different core is never reused.
+      - name: Cache build artifacts
+        uses: actions/cache@v6
+        with:
+          path: target
+          key: ${{ runner.os }}-target-${{ hashFiles('**/Cargo.toml') }}-${{ env.CORE_SHA }}
+
+      - name: cargo test (no features)
+        run: cargo test --no-fail-fast
+
+      # Run even when the previous step failed, so one job reports BOTH
+      # configurations instead of hiding the second behind the first.
+      - name: cargo test --features jit
+        if: always()
+        run: cargo test --features jit --no-fail-fast

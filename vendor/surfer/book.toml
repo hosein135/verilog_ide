@@ -1,0 +1,5 @@
+[book]
+authors = ["Surfer developers"]
+language = "en"
+src = "docs"
+title = "Surfer"

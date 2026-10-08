@@ -1,0 +1,10 @@
+stages:
+  - test
+
+test:
+  stage: test
+  image: rust:latest
+  script:
+    - rustc --version
+    - cargo --version
+    - cargo test --test wellen_inputs -- --nocapture
