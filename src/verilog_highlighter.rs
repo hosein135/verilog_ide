@@ -57,13 +57,13 @@ impl Highlight {
 
     fn color(self) -> Color {
         match self.0 {
-            TokenKind::Comment => Color::from_rgb(0.45, 0.58, 0.56),
-            TokenKind::Directive => Color::from_rgb(0.45, 0.82, 0.86),
-            TokenKind::String => Color::from_rgb(0.93, 0.74, 0.46),
-            TokenKind::Number => Color::from_rgb(0.70, 0.88, 0.62),
-            TokenKind::Keyword => Color::from_rgb(0.95, 0.62, 0.42),
-            TokenKind::SystemTask => Color::from_rgb(0.62, 0.78, 0.98),
-            TokenKind::Operator => Color::from_rgb(0.72, 0.80, 0.88),
+            TokenKind::Comment => Color::from_rgb(0.34, 0.46, 0.40),
+            TokenKind::Directive => Color::from_rgb(0.05, 0.40, 0.52),
+            TokenKind::String => Color::from_rgb(0.62, 0.32, 0.05),
+            TokenKind::Number => Color::from_rgb(0.08, 0.45, 0.28),
+            TokenKind::Keyword => Color::from_rgb(0.68, 0.26, 0.08),
+            TokenKind::SystemTask => Color::from_rgb(0.12, 0.32, 0.66),
+            TokenKind::Operator => Color::from_rgb(0.25, 0.32, 0.38),
         }
     }
 }

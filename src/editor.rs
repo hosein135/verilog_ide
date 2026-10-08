@@ -18,11 +18,11 @@ pub const EDITOR_FONT_SIZE: f32 = 14.0;
 pub const EDITOR_LINE_HEIGHT: f32 = 20.0;
 pub const EDITOR_PADDING: f32 = 5.0;
 
-const GUTTER_BG: Color = Color::from_rgb(0.06, 0.08, 0.11);
-const GUTTER_ACTIVE_BG: Color = Color::from_rgb(0.10, 0.22, 0.26);
-const GUTTER_FG: Color = Color::from_rgb(0.40, 0.48, 0.55);
-const GUTTER_FG_ACTIVE: Color = Color::from_rgb(0.55, 0.88, 0.90);
-const GUTTER_RULE: Color = Color::from_rgb(0.16, 0.22, 0.28);
+const GUTTER_BG: Color = Color::from_rgb(0.955, 0.965, 0.975);
+const GUTTER_ACTIVE_BG: Color = Color::from_rgb(0.84, 0.93, 0.94);
+const GUTTER_FG: Color = Color::from_rgb(0.52, 0.58, 0.64);
+const GUTTER_FG_ACTIVE: Color = Color::from_rgb(0.05, 0.42, 0.48);
+const GUTTER_RULE: Color = Color::from_rgb(0.80, 0.84, 0.88);
 const GUTTER_PAD_RIGHT: f32 = 10.0;
 const GUTTER_PAD_LEFT: f32 = 8.0;
 const DIGIT_WIDTH: f32 = 8.4;

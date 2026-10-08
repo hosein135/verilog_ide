@@ -25,17 +25,17 @@ pub const TRACE_HEIGHT: f32 = 28.0;
 const TRACE_PAD: f32 = 5.0;
 const LINE: f32 = 2.0;
 
-const BG: Color = Color::from_rgb(0.07, 0.09, 0.12);
-const BG_NAME: Color = Color::from_rgb(0.09, 0.12, 0.16);
-const GRID: Color = Color::from_rgb(0.16, 0.22, 0.28);
-const FG: Color = Color::from_rgb(0.90, 0.93, 0.96);
-const FG_MUTED: Color = Color::from_rgb(0.55, 0.63, 0.70);
-const HIGH: Color = Color::from_rgb(0.30, 0.86, 0.48);
-const LOW: Color = Color::from_rgb(0.38, 0.62, 0.98);
-const UNK: Color = Color::from_rgb(0.92, 0.62, 0.22);
-const BUS: Color = Color::from_rgb(0.45, 0.78, 0.95);
-const CURSOR: Color = Color::from_rgb(0.95, 0.32, 0.32);
-const SELECT: Color = Color::from_rgb(0.16, 0.16, 0.18);
+const BG: Color = Color::from_rgb(0.99, 0.992, 0.996);
+const BG_NAME: Color = Color::from_rgb(0.955, 0.965, 0.975);
+const GRID: Color = Color::from_rgb(0.82, 0.86, 0.90);
+const FG: Color = Color::from_rgb(0.13, 0.16, 0.20);
+const FG_MUTED: Color = Color::from_rgb(0.36, 0.42, 0.48);
+const HIGH: Color = Color::from_rgb(0.08, 0.52, 0.32);
+const LOW: Color = Color::from_rgb(0.16, 0.36, 0.74);
+const UNK: Color = Color::from_rgb(0.75, 0.40, 0.08);
+const BUS: Color = Color::from_rgb(0.05, 0.45, 0.55);
+const CURSOR: Color = Color::from_rgb(0.80, 0.18, 0.18);
+const SELECT: Color = Color::from_rgb(0.91, 0.94, 0.96);
 
 /// How the IDE should open waveform files (`.vcd` / `.fst` / `.ghw`).
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -671,7 +671,7 @@ fn draw_waves(renderer: &mut iced::Renderer, view: &WaveView, wave: Rectangle, v
         }
         if i % 2 == 1 {
             if let Some(clip) = row.intersection(&visible) {
-                fill(renderer, clip, Color::from_rgba(1.0, 1.0, 1.0, 0.02));
+                fill(renderer, clip, Color::from_rgba(0.08, 0.12, 0.16, 0.04));
             }
         }
         draw_trace(renderer, trace, view, wave, y, visible);

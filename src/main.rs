@@ -4,6 +4,7 @@
 
 mod app;
 mod editor;
+mod icons;
 mod project;
 mod sim;
 mod templates;

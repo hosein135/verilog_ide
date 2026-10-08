@@ -4,12 +4,13 @@ Desktop IDE for **Verilog** HDL and **testbenches**, written in Rust with [iced]
 
 ## Features
 
-- Project explorer for `.v`, `.sv`, and `.vh` files
+- Project explorer for `.v`, `.sv`, and `.vh` files, with file-type icons
+- Light theme
 - Multi-tab code editor with line numbers and syntax highlighting
 - New module / new testbench templates
 - Half adder sample (`samples/half_adder`): `half_adder.v` and `half_adder_tb.v`. The IDE opens it on startup. Run simulates both with xezim, writes `half_adder.vcd`, and opens the waveform.
 - **Run** button (F5): simulate Verilog + testbench with [xezim](https://github.com/aionhw/xezim) and write a `.vcd` waveform
-- **Waveform / Text Editor** modes: click a `.vcd` to view traces (via [wellen](https://github.com/ekiwi/wellen) from [Surfer](https://gitlab.com/surfer-project/surfer)) or the dump as text
+- **Waveform / Text Editor** modes: each `.vcd` in the explorer has **Text** and **Wave** controls. The same pair sits on the editor toolbar while that `.vcd` is open. Traces are drawn with [wellen](https://github.com/ekiwi/wellen) from [Surfer](https://gitlab.com/surfer-project/surfer)
 - **Anon VCD**: flatten and rename the open `.vcd` with [vcd-anon](https://gitlab.com/surfer-project/vcd-anon). Writes `name.anon.vcd` and `name.anon.mapping.txt`
 - **To SAIF**: convert a `.vcd` / `.fst` / `.ghw` dump to a switching-activity `.saif` with [wave2saif](https://gitlab.com/surfer-project/wave2saif)
 - Console + problems panel, find, save shortcuts
@@ -65,9 +66,7 @@ The bundled sample is `samples/half_adder/half_adder.v` and `half_adder_tb.v`. R
 
 [Surfer](https://gitlab.com/surfer-project/surfer) is vendored at `vendor/surfer` (`v0.7.0`). Its parser, [wellen](https://github.com/ekiwi/wellen), is a Cargo dependency and is compiled with the rest of the crate (same pattern as xezim).
 
-Use **View → Waveform** or the **Wave** chip in the menu bar, then click a `.vcd` (also `.fst` / `.ghw`) in the explorer. Traces open in the editor pane (scroll to zoom, drag to pan, click to place a cursor).
-
-Use **View → Text Editor** or the **Text** chip, then click the same file to see the dump as text.
+On a `.vcd` row in the explorer, click **Wave** to draw traces in the editor pane (scroll to zoom, drag to pan, click to place a cursor), or **Text** to read the dump as text. The same **Text** / **Wave** pair is on the toolbar while that `.vcd` is open. Other dumps (`.fst` / `.ghw`) still open from **View → Waveform** or **View → Text Editor**.
 
 After **Run**, if Waveform mode is on, the new `.vcd` opens as traces automatically.
 

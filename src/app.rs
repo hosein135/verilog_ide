@@ -4,12 +4,13 @@ use crate::editor::{
     self, cursor_from_line_col, cursor_line_col, EDITOR_FONT_SIZE, EDITOR_LINE_HEIGHT,
     EDITOR_PADDING,
 };
+use crate::icons::{self, Kind};
 use crate::verilog_highlighter::{
     self, Settings as VerilogHighlightSettings, VerilogHighlighter,
 };
 use crate::project::{
-    collect_dir_paths, initial_editor_files, is_wave_path, load_file, locate_half_adder_sample,
-    save_file, FileView, IdeProject, OpenFile, TreeNode,
+    collect_dir_paths, initial_editor_files, is_vcd_path, is_wave_path, load_file,
+    locate_half_adder_sample, save_file, FileView, IdeProject, OpenFile, TreeNode,
 };
 use crate::sim::{self, SimResult};
 use crate::templates;
@@ -19,11 +20,11 @@ use iced::keyboard::{self, Key};
 use iced::widget::text::Wrapping;
 use iced::widget::{
     button, column, container, horizontal_rule, horizontal_space, mouse_area, row, scrollable,
-    stack, text, text_editor, text_input, Column, Space,
+    stack, text, text_editor, text_input, tooltip, Column, Space,
 };
 use iced::{
-    Alignment, Border, Color, Element, Fill, Font, Length, Padding, Point, Shadow, Subscription,
-    Task, Theme,
+    Alignment, Background, Border, Color, Element, Fill, Font, Length, Padding, Point, Shadow,
+    Subscription, Task, Theme,
 };
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -35,20 +36,24 @@ const MENU_HEIGHT: f32 = 42.0;
 const TAB_HEIGHT: f32 = 38.0;
 const STATUS_HEIGHT: f32 = 26.0;
 
-// Ink, teal, and amber. The editor sits on the darkest surface.
-const BG_EDITOR: Color = Color::from_rgb(0.07, 0.09, 0.12);
-const BG_SIDEBAR: Color = Color::from_rgb(0.09, 0.12, 0.16);
-const BG_ACTIVITY: Color = Color::from_rgb(0.05, 0.07, 0.10);
-const BG_TABS: Color = Color::from_rgb(0.08, 0.11, 0.15);
-const BG_TAB_ACTIVE: Color = Color::from_rgb(0.11, 0.16, 0.21);
-const BG_STATUS: Color = Color::from_rgb(0.08, 0.32, 0.36);
-const BG_MENU: Color = Color::from_rgb(0.06, 0.08, 0.11);
-const FG_MUTED: Color = Color::from_rgb(0.55, 0.63, 0.70);
-const FG_TEXT: Color = Color::from_rgb(0.90, 0.93, 0.96);
-const BORDER: Color = Color::from_rgb(0.18, 0.24, 0.31);
-const ACCENT: Color = Color::from_rgb(0.31, 0.82, 0.84);
-const AMBER: Color = Color::from_rgb(0.93, 0.72, 0.36);
-const RUN_GREEN: Color = Color::from_rgb(0.16, 0.58, 0.42);
+// Light chrome: white editor, cool gray side panels, teal accent.
+const BG_EDITOR: Color = Color::from_rgb(0.99, 0.992, 0.996);
+const BG_SIDEBAR: Color = Color::from_rgb(0.94, 0.95, 0.965);
+const BG_ACTIVITY: Color = Color::from_rgb(0.90, 0.925, 0.945);
+const BG_TABS: Color = Color::from_rgb(0.945, 0.955, 0.965);
+const BG_TAB_ACTIVE: Color = Color::from_rgb(1.0, 1.0, 1.0);
+const BG_STATUS: Color = Color::from_rgb(0.07, 0.40, 0.45);
+const BG_MENU: Color = Color::from_rgb(0.975, 0.98, 0.985);
+const BG_HOVER: Color = Color::from_rgb(0.90, 0.93, 0.95);
+const BG_SELECT: Color = Color::from_rgb(0.82, 0.93, 0.94);
+const BG_ELEVATED: Color = Color::from_rgb(1.0, 1.0, 1.0);
+const FG_MUTED: Color = Color::from_rgb(0.36, 0.42, 0.48);
+const FG_TEXT: Color = Color::from_rgb(0.13, 0.16, 0.20);
+const STATUS_FG: Color = Color::from_rgb(0.94, 0.98, 0.98);
+const BORDER: Color = Color::from_rgb(0.80, 0.84, 0.88);
+const ACCENT: Color = Color::from_rgb(0.05, 0.45, 0.51);
+const ACCENT_HOVER: Color = Color::from_rgb(0.08, 0.54, 0.60);
+const RUN_GREEN: Color = Color::from_rgb(0.12, 0.52, 0.36);
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum BottomTab {
@@ -110,6 +115,7 @@ pub enum Message {
     FilePicked(Result<Option<PathBuf>, DialogError>),
     CreateSample,
     OpenFile(PathBuf),
+    OpenAs(PathBuf, ViewMode),
     ToggleDir(PathBuf),
     SelectTab(usize),
     CloseTab(usize),
@@ -150,7 +156,7 @@ pub enum DialogError {
 
 pub fn run() -> iced::Result {
     iced::application("Verilog IDE", VerilogIde::update, VerilogIde::view)
-        .theme(|_| Theme::Dark)
+        .theme(|_| Theme::Light)
         .subscription(VerilogIde::subscription)
         .window(iced::window::Settings {
             size: iced::Size::new(1360.0, 840.0),
@@ -278,6 +284,12 @@ impl VerilogIde {
                 Task::none()
             }
             Message::OpenFile(path) => {
+                let load = self.open_path(&path);
+                Task::batch([load, editor::scroll_to_y(0.0)])
+            }
+            Message::OpenAs(path, mode) => {
+                self.menu_open = None;
+                self.view_mode = mode;
                 let load = self.open_path(&path);
                 Task::batch([load, editor::scroll_to_y(0.0)])
             }
@@ -1121,7 +1133,6 @@ impl VerilogIde {
                 menu_label("Run", run_active, Message::MenuToggle(TopMenu::Run)),
                 menu_label("Help", help_active, Message::MenuToggle(TopMenu::Help)),
                 horizontal_space(),
-                mode_toggle(self.view_mode),
                 run_toolbar_button(self.sim_running, !self.tool_running),
                 vcd_tool_button(
                     "Anon VCD",
@@ -1149,13 +1160,13 @@ impl VerilogIde {
     fn view_activity_bar(&self) -> Element<'_, Message> {
         container(
             column![
-                container(text("V").size(18).color(ACCENT))
+                container(icons::mark(Kind::Logo).size(22.0))
                     .width(Length::Fixed(36.0))
                     .height(Length::Fixed(36.0))
                     .align_x(Alignment::Center)
                     .align_y(Alignment::Center)
                     .style(|_| iced::widget::container::Style {
-                        background: Some(iced::Background::Color(Color::from_rgb(0.08, 0.20, 0.24))),
+                        background: Some(iced::Background::Color(Color::from_rgb(0.86, 0.94, 0.95))),
                         border: Border {
                             color: ACCENT,
                             width: 1.0,
@@ -1179,20 +1190,21 @@ impl VerilogIde {
         let title = row![
             text("PROJECT").size(11).color(ACCENT),
             horizontal_space(),
-            sidebar_action("New", Message::ShowNewFile),
-            sidebar_action("Dir", Message::ShowNewFolder),
-            sidebar_action("Sync", Message::RefreshExplorer),
+            sidebar_icon(Kind::NewFile, "New file", Message::ShowNewFile),
+            sidebar_icon(Kind::NewFolder, "New folder", Message::ShowNewFolder),
+            sidebar_icon(Kind::Refresh, "Refresh", Message::RefreshExplorer),
         ]
         .align_y(Alignment::Center)
         .padding([8, 10]);
 
         let project_header: Element<'_, Message> = if let Some(p) = self.project.as_ref() {
             row![
-                text("v").size(12).color(FG_MUTED),
+                icons::mark(Kind::FolderOpen).size(14.0),
                 text(p.name.as_str()).size(13).color(FG_TEXT),
             ]
-            .spacing(4)
-            .padding([2, 8])
+            .spacing(6)
+            .padding([4, 10])
+            .align_y(Alignment::Center)
             .into()
         } else {
             Space::new(Length::Fill, Length::Fixed(0.0)).into()
@@ -1245,18 +1257,27 @@ impl VerilogIde {
         if depth > 0 {
             if node.is_dir {
                 let expanded = self.expanded.contains(&node.path);
-                let chevron = if expanded { "▾" } else { "▸" };
                 items.push(tree_row(
                     indent,
-                    chevron,
+                    Some(expanded),
+                    if expanded { Kind::FolderOpen } else { Kind::Folder },
                     node.name.clone(),
                     is_active,
                     Message::ToggleDir(node.path.clone()),
                 ));
+            } else if is_vcd_path(&node.path) {
+                items.push(vcd_tree_row(
+                    indent,
+                    node.name.clone(),
+                    node.path.clone(),
+                    is_active,
+                    self.file_view(&node.path),
+                ));
             } else {
                 items.push(tree_row(
                     indent,
-                    file_badge(&node.path),
+                    None,
+                    file_kind(&node.path),
                     node.name.clone(),
                     is_active,
                     Message::OpenFile(node.path.clone()),
@@ -1309,21 +1330,22 @@ impl VerilogIde {
                         .unwrap_or("untitled");
                     let mut title = String::new();
                     if f.dirty {
-                        title.push_str("* ");
-                    }
-                    if f.view == FileView::Waveform {
-                        title.push_str("~ ");
+                        title.push('●');
+                        title.push(' ');
                     }
                     title.push_str(name);
                     let selected = self.active == Some(i);
                     row![
+                        container(icons::mark(file_kind(&f.path)).size(14.0))
+                            .align_y(Alignment::Center),
                         tab_button(title, selected, Message::SelectTab(i)),
                         button(text("×"))
                             .on_press(Message::CloseTab(i))
                             .padding([2, 6])
                             .style(|_, _| tab_close_style()),
                     ]
-                    .spacing(0)
+                    .spacing(2)
+                    .align_y(Alignment::Center)
                     .into()
                 }),
             )
@@ -1383,7 +1405,8 @@ impl VerilogIde {
                     rust: false,
                 },
                 verilog_highlighter::format_highlight,
-            );
+            )
+            .style(|_, _| editor_style());
 
         let body = row![
             editor::line_gutter(line_count, current_line, self.editor_view_h),
@@ -1395,7 +1418,7 @@ impl VerilogIde {
         .width(Fill)
         .height(Length::Fixed(content_h));
 
-        container(
+        let editor_view = container(
             scrollable(body)
                 .id(editor::scroll_id())
                 .width(Fill)
@@ -1410,7 +1433,52 @@ impl VerilogIde {
         )
         .width(Fill)
         .height(Fill)
-        .style(|_| panel_style(BG_EDITOR))
+        .style(|_| panel_style(BG_EDITOR));
+
+        if let Some(path) = self.active_path().filter(|path| is_vcd_path(path)).cloned() {
+            column![self.view_vcd_mode_bar(&path), editor_view]
+                .spacing(0)
+                .width(Fill)
+                .height(Fill)
+                .into()
+        } else {
+            editor_view.into()
+        }
+    }
+
+    fn file_view(&self, path: &std::path::Path) -> Option<FileView> {
+        self.open.iter().find(|file| file.path == path).map(|file| file.view)
+    }
+
+    fn view_vcd_mode_bar(&self, path: &std::path::Path) -> Element<'static, Message> {
+        let view = self.file_view(path);
+        let label = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("waveform")
+            .to_string();
+        let path_buf = path.to_path_buf();
+        container(
+            row![
+                vcd_switch(
+                    "Text",
+                    view == Some(FileView::Text),
+                    Message::OpenAs(path_buf.clone(), ViewMode::TextEditor),
+                ),
+                vcd_switch(
+                    "Wave",
+                    view == Some(FileView::Waveform),
+                    Message::OpenAs(path_buf, ViewMode::Waveform),
+                ),
+                horizontal_space(),
+                text(label).size(12).color(FG_MUTED),
+            ]
+            .spacing(6)
+            .padding([6, 8])
+            .align_y(Alignment::Center),
+        )
+        .width(Fill)
+        .style(|_| panel_style(BG_TABS))
         .into()
     }
 
@@ -1428,29 +1496,40 @@ impl VerilogIde {
         };
 
         let tools_enabled = !self.sim_running && !self.tool_running;
-        let vcd_only = path
-            .extension()
-            .and_then(|ext| ext.to_str())
-            .is_some_and(|ext| ext.eq_ignore_ascii_case("vcd"));
+        let vcd_only = is_vcd_path(path);
         let file_label = path
             .file_name()
             .and_then(|name| name.to_str())
             .unwrap_or("waveform")
             .to_string();
+        let view = self.file_view(path);
+        let mut tools = iced::widget::Row::<'_, Message>::new()
+            .spacing(6)
+            .padding([6, 8])
+            .align_y(Alignment::Center);
+        if vcd_only {
+            tools = tools
+                .push(vcd_switch(
+                    "Text",
+                    view == Some(FileView::Text),
+                    Message::OpenAs(path.clone(), ViewMode::TextEditor),
+                ))
+                .push(vcd_switch(
+                    "Wave",
+                    view == Some(FileView::Waveform),
+                    Message::OpenAs(path.clone(), ViewMode::Waveform),
+                ));
+        }
         let tool_bar = container(
-            row![
-                vcd_tool_button(
+            tools
+                .push(vcd_tool_button(
                     "Anon VCD",
                     tools_enabled && vcd_only,
                     Message::AnonymizeVcd,
-                ),
-                vcd_tool_button("To SAIF", tools_enabled, Message::VcdToSaif),
-                horizontal_space(),
-                text(file_label).size(12).color(FG_MUTED),
-            ]
-            .spacing(6)
-            .padding([6, 8])
-            .align_y(Alignment::Center),
+                ))
+                .push(vcd_tool_button("To SAIF", tools_enabled, Message::VcdToSaif))
+                .push(horizontal_space())
+                .push(text(file_label).size(12).color(FG_MUTED)),
         )
         .width(Fill)
         .style(|_| panel_style(BG_TABS));
@@ -1620,11 +1699,11 @@ impl VerilogIde {
 
         container(
             row![
-                text(branch).size(12).color(Color::WHITE),
+                text(branch).size(12).color(STATUS_FG),
                 text("   ").size(12),
-                text(sim).size(12).color(ACCENT),
+                text(sim).size(12).color(Color::from_rgb(0.75, 0.95, 0.93)),
                 horizontal_space(),
-                text(detail).size(12).color(Color::WHITE),
+                text(detail).size(12).color(STATUS_FG),
             ]
             .padding([2, 12])
             .align_y(Alignment::Center),
@@ -1701,18 +1780,33 @@ fn panel_style(bg: Color) -> iced::widget::container::Style {
     }
 }
 
+fn editor_style() -> text_editor::Style {
+    text_editor::Style {
+        background: Background::Color(BG_EDITOR),
+        border: Border {
+            radius: 0.0.into(),
+            width: 0.0,
+            color: Color::TRANSPARENT,
+        },
+        icon: FG_MUTED,
+        placeholder: FG_MUTED,
+        value: FG_TEXT,
+        selection: Color::from_rgb(0.73, 0.88, 0.93),
+    }
+}
+
 fn dialog_style() -> iced::widget::container::Style {
     iced::widget::container::Style {
-        background: Some(iced::Background::Color(Color::from_rgb(0.11, 0.15, 0.19))),
+        background: Some(iced::Background::Color(BG_ELEVATED)),
         border: Border {
-            color: ACCENT,
+            color: BORDER,
             width: 1.0,
             radius: 8.0.into(),
         },
         shadow: Shadow {
-            color: Color::from_rgba(0.0, 0.0, 0.0, 0.35),
-            offset: iced::Vector::new(0.0, 6.0),
-            blur_radius: 16.0,
+            color: Color::from_rgba(0.10, 0.14, 0.18, 0.12),
+            offset: iced::Vector::new(0.0, 4.0),
+            blur_radius: 14.0,
         },
         ..Default::default()
     }
@@ -1738,9 +1832,9 @@ fn menu_label(label: &'static str, active: bool, msg: Message) -> Element<'stati
         let hovered = matches!(status, iced::widget::button::Status::Hovered | iced::widget::button::Status::Pressed);
         iced::widget::button::Style {
             background: if active {
-                Some(iced::Background::Color(Color::from_rgb(0.30, 0.30, 0.32)))
+                Some(iced::Background::Color(BG_SELECT))
             } else if hovered {
-                Some(iced::Background::Color(Color::from_rgb(0.26, 0.26, 0.28)))
+                Some(iced::Background::Color(BG_HOVER))
             } else {
                 None
             },
@@ -1771,7 +1865,7 @@ fn menu_item_owned(label: String, msg: Message) -> Element<'static, Message> {
             );
             iced::widget::button::Style {
                 background: if hovered {
-                    Some(iced::Background::Color(Color::from_rgb(0.12, 0.26, 0.30)))
+                    Some(iced::Background::Color(BG_SELECT))
                 } else {
                     None
                 },
@@ -1804,19 +1898,10 @@ fn menu_dropdown_left(menu: TopMenu) -> f32 {
     }
 }
 
-fn mode_toggle(mode: ViewMode) -> Element<'static, Message> {
-    row![
-        mode_chip("Text", mode == ViewMode::TextEditor, Message::SetViewMode(ViewMode::TextEditor)),
-        mode_chip("Wave", mode == ViewMode::Waveform, Message::SetViewMode(ViewMode::Waveform)),
-    ]
-    .spacing(4)
-    .into()
-}
-
-fn mode_chip(label: &'static str, selected: bool, msg: Message) -> Element<'static, Message> {
-    button(text(label).size(12))
+fn vcd_switch(label: &'static str, selected: bool, msg: Message) -> Element<'static, Message> {
+    button(text(label).size(11))
         .on_press(msg)
-        .padding([4, 10])
+        .padding([3, 7])
         .style(move |_, status| {
             let hovered = matches!(
                 status,
@@ -1824,17 +1909,17 @@ fn mode_chip(label: &'static str, selected: bool, msg: Message) -> Element<'stat
             );
             iced::widget::button::Style {
                 background: Some(iced::Background::Color(if selected {
-                    Color::from_rgb(0.10, 0.36, 0.40)
+                    ACCENT
                 } else if hovered {
-                    Color::from_rgb(0.14, 0.18, 0.22)
+                    BG_SELECT
                 } else {
-                    Color::from_rgb(0.10, 0.13, 0.17)
+                    BG_ELEVATED
                 })),
                 text_color: if selected { Color::WHITE } else { FG_TEXT },
                 border: Border {
                     color: if selected { ACCENT } else { BORDER },
                     width: 1.0,
-                    radius: 8.0.into(),
+                    radius: 7.0.into(),
                 },
                 ..Default::default()
             }
@@ -1879,11 +1964,11 @@ fn vcd_tool_button(label: &'static str, enabled: bool, msg: Message) -> Element<
         );
         iced::widget::button::Style {
             background: Some(iced::Background::Color(if !enabled {
-                Color::from_rgb(0.12, 0.16, 0.20)
+                Color::from_rgb(0.92, 0.93, 0.95)
             } else if hovered {
-                Color::from_rgb(0.16, 0.42, 0.48)
+                ACCENT_HOVER
             } else {
-                Color::from_rgb(0.12, 0.30, 0.36)
+                ACCENT
             })),
             text_color: if enabled { Color::WHITE } else { FG_MUTED },
             border: Border {
@@ -1904,26 +1989,26 @@ fn menu_dropdown(items: Column<'_, Message>) -> Element<'_, Message> {
     container(items.padding(6).spacing(2))
         .width(Length::Fixed(240.0))
         .style(|_| iced::widget::container::Style {
-            background: Some(iced::Background::Color(Color::from_rgb(0.10, 0.13, 0.17))),
+            background: Some(iced::Background::Color(BG_ELEVATED)),
             border: Border {
                 color: BORDER,
                 width: 1.0,
                 radius: 8.0.into(),
             },
             shadow: Shadow {
-                color: Color::from_rgba(0.0, 0.0, 0.0, 0.45),
+                color: Color::from_rgba(0.10, 0.14, 0.18, 0.16),
                 offset: iced::Vector::new(0.0, 4.0),
-                blur_radius: 8.0,
+                blur_radius: 12.0,
             },
             ..Default::default()
         })
         .into()
 }
 
-fn sidebar_action(icon: &'static str, msg: Message) -> Element<'static, Message> {
-    button(text(icon).size(11))
+fn sidebar_icon(kind: Kind, tip: &'static str, msg: Message) -> Element<'static, Message> {
+    let button = button(icons::mark(kind).size(15.0))
         .on_press(msg)
-        .padding([3, 6])
+        .padding(4)
         .style(|_, status| {
             let hovered = matches!(
                 status,
@@ -1931,19 +2016,34 @@ fn sidebar_action(icon: &'static str, msg: Message) -> Element<'static, Message>
             );
             iced::widget::button::Style {
                 background: if hovered {
-                    Some(iced::Background::Color(Color::from_rgb(0.12, 0.22, 0.26)))
+                    Some(iced::Background::Color(BG_SELECT))
                 } else {
                     None
                 },
-                text_color: if hovered { ACCENT } else { FG_MUTED },
+                text_color: FG_TEXT,
                 border: Border {
                     radius: 6.0.into(),
                     ..Default::default()
                 },
                 ..Default::default()
             }
-        })
-        .into()
+        });
+    tooltip(
+        button,
+        container(text(tip).size(12).color(FG_TEXT))
+            .padding([4, 8])
+            .style(|_| iced::widget::container::Style {
+                background: Some(iced::Background::Color(BG_ELEVATED)),
+                border: Border {
+                    color: BORDER,
+                    width: 1.0,
+                    radius: 6.0.into(),
+                },
+                ..Default::default()
+            }),
+        tooltip::Position::Bottom,
+    )
+    .into()
 }
 
 fn sidebar_link(label: &str, msg: Message) -> Element<'_, Message> {
@@ -1957,87 +2057,146 @@ fn sidebar_link(label: &str, msg: Message) -> Element<'_, Message> {
             );
             iced::widget::button::Style {
                 background: None,
-                text_color: if hovered { Color::WHITE } else { ACCENT },
+                text_color: if hovered { ACCENT_HOVER } else { ACCENT },
                 ..Default::default()
             }
         })
         .into()
 }
 
-fn file_badge(path: &Path) -> &'static str {
-    if is_wave_path(path) {
-        return "~";
-    }
+fn file_kind(path: &Path) -> Kind {
     let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
-    if templates::is_testbench_filename(name) {
-        return "TB";
-    }
     let lower = name.to_ascii_lowercase();
-    if lower.ends_with(".v")
-        || lower.ends_with(".sv")
-        || lower.ends_with(".vh")
-        || lower.ends_with(".svh")
-    {
-        "V"
+    if lower.ends_with(".vcd") {
+        Kind::Vcd
+    } else if is_wave_path(path) {
+        Kind::Wave
+    } else if lower.ends_with(".saif") {
+        Kind::Saif
+    } else if templates::is_testbench_filename(name) {
+        Kind::Testbench
+    } else if lower.ends_with(".vh") || lower.ends_with(".svh") {
+        Kind::Header
+    } else if lower.ends_with(".v") || lower.ends_with(".sv") || lower.ends_with(".vl") {
+        Kind::Verilog
+    } else if lower.ends_with(".txt") || lower.ends_with(".md") {
+        Kind::TextFile
     } else {
-        "·"
+        Kind::File
     }
+}
+
+fn tree_button_style(active: bool, status: iced::widget::button::Status) -> iced::widget::button::Style {
+    let hovered = matches!(
+        status,
+        iced::widget::button::Status::Hovered | iced::widget::button::Status::Pressed
+    );
+    iced::widget::button::Style {
+        background: if active {
+            Some(iced::Background::Color(BG_SELECT))
+        } else if hovered {
+            Some(iced::Background::Color(BG_HOVER))
+        } else {
+            None
+        },
+        text_color: FG_TEXT,
+        border: Border {
+            color: if active { ACCENT } else { Color::TRANSPARENT },
+            width: if active { 1.0 } else { 0.0 },
+            radius: 6.0.into(),
+        },
+        ..Default::default()
+    }
+}
+
+fn tree_label(kind: Kind, label: String, chevron: Option<bool>) -> Element<'static, Message> {
+    let marker: Element<'static, Message> = match chevron {
+        Some(expanded) => icons::mark(if expanded {
+            Kind::ChevronDown
+        } else {
+            Kind::ChevronRight
+        })
+        .size(12.0)
+        .into(),
+        None => Space::new(Length::Fixed(12.0), Length::Fixed(12.0)).into(),
+    };
+    row![
+        container(marker)
+            .width(Length::Fixed(14.0))
+            .align_y(Alignment::Center),
+        icons::mark(kind).size(16.0),
+        text(label)
+            .size(13)
+            .color(FG_TEXT)
+            .wrapping(Wrapping::None),
+    ]
+    .spacing(6)
+    .align_y(Alignment::Center)
+    .into()
 }
 
 fn tree_row(
     indent: f32,
-    badge: &str,
+    chevron: Option<bool>,
+    kind: Kind,
     label: String,
     active: bool,
     msg: Message,
 ) -> Element<'static, Message> {
-    let badge_color = if badge == "TB" {
-        AMBER
-    } else if badge == "~" || badge == "V" {
-        ACCENT
-    } else {
-        FG_MUTED
-    };
     row![
         Space::new(Length::Fixed(indent), Length::Shrink),
-        button(
-            row![
-                container(text(badge.to_string()).size(10).color(if active {
-                    Color::WHITE
-                } else {
-                    badge_color
-                }))
-                .width(Length::Fixed(22.0)),
-                text(label).size(12).color(if active { Color::WHITE } else { FG_TEXT }),
-            ]
-            .spacing(4)
-            .align_y(Alignment::Center),
-        )
-        .on_press(msg)
-        .width(Fill)
-        .padding([4, 6])
-        .style(move |_, status| {
-            let hovered = matches!(
-                status,
-                iced::widget::button::Status::Hovered | iced::widget::button::Status::Pressed
-            );
-            iced::widget::button::Style {
-                background: if active {
-                    Some(iced::Background::Color(Color::from_rgb(0.10, 0.34, 0.38)))
-                } else if hovered {
-                    Some(iced::Background::Color(Color::from_rgb(0.12, 0.16, 0.20)))
-                } else {
-                    None
-                },
-                text_color: FG_TEXT,
-                border: Border {
-                    radius: 6.0.into(),
-                    ..Default::default()
-                },
-                ..Default::default()
-            }
-        }),
+        button(tree_label(kind, label, chevron))
+            .on_press(msg)
+            .width(Fill)
+            .padding([3, 6])
+            .style(move |_, status| tree_button_style(active, status)),
     ]
+    .width(Fill)
+    .align_y(Alignment::Center)
+    .into()
+}
+
+fn vcd_tree_row(
+    indent: f32,
+    label: String,
+    path: PathBuf,
+    active: bool,
+    view: Option<FileView>,
+) -> Element<'static, Message> {
+    column![
+        row![
+            Space::new(Length::Fixed(indent), Length::Shrink),
+            button(tree_label(Kind::Vcd, label, None))
+                .on_press(Message::OpenFile(path.clone()))
+                .width(Fill)
+                .padding([3, 6])
+                .style(move |_, status| tree_button_style(active, status)),
+        ]
+        .width(Fill)
+        .align_y(Alignment::Center),
+        row![
+            Space::new(Length::Fixed(indent + 36.0), Length::Shrink),
+            vcd_switch(
+                "Text",
+                view == Some(FileView::Text),
+                Message::OpenAs(path.clone(), ViewMode::TextEditor),
+            ),
+            vcd_switch(
+                "Wave",
+                view == Some(FileView::Waveform),
+                Message::OpenAs(path, ViewMode::Waveform),
+            ),
+        ]
+        .spacing(4)
+        .padding(Padding {
+            top: 0.0,
+            right: 8.0,
+            bottom: 3.0,
+            left: 0.0,
+        })
+        .align_y(Alignment::Center),
+    ]
+    .spacing(0)
     .width(Fill)
     .into()
 }
@@ -2064,13 +2223,13 @@ fn tab_button(title: String, selected: bool, msg: Message) -> Element<'static, M
 }
 
 fn view_welcome() -> Element<'static, Message> {
-    let mark = container(text("V").size(34).color(ACCENT))
+    let mark = container(icons::mark(Kind::Logo).size(42.0))
         .width(Length::Fixed(76.0))
         .height(Length::Fixed(76.0))
         .align_x(Alignment::Center)
         .align_y(Alignment::Center)
         .style(|_| iced::widget::container::Style {
-            background: Some(iced::Background::Color(BG_SIDEBAR)),
+            background: Some(iced::Background::Color(Color::from_rgb(0.90, 0.96, 0.96))),
             border: Border {
                 color: ACCENT,
                 width: 2.0,
@@ -2112,7 +2271,7 @@ fn view_welcome() -> Element<'static, Message> {
 
 fn welcome_step(n: &'static str, body: &'static str) -> Element<'static, Message> {
     row![
-        container(text(n).size(12).color(Color::from_rgb(0.05, 0.08, 0.10)))
+        container(text(n).size(12).color(Color::WHITE))
             .width(Length::Fixed(22.0))
             .height(Length::Fixed(22.0))
             .align_x(Alignment::Center)
@@ -2150,21 +2309,13 @@ fn welcome_button(label: &'static str, msg: Message, primary: bool) -> Element<'
 fn accent_button_style(primary: bool, hovered: bool) -> iced::widget::button::Style {
     iced::widget::button::Style {
         background: Some(iced::Background::Color(if primary {
-            if hovered {
-                Color::from_rgb(0.38, 0.88, 0.90)
-            } else {
-                ACCENT
-            }
+            if hovered { ACCENT_HOVER } else { ACCENT }
         } else if hovered {
-            Color::from_rgb(0.14, 0.20, 0.26)
+            BG_HOVER
         } else {
-            BG_SIDEBAR
+            BG_ELEVATED
         })),
-        text_color: if primary {
-            Color::from_rgb(0.05, 0.08, 0.10)
-        } else {
-            FG_TEXT
-        },
+        text_color: if primary { Color::WHITE } else { FG_TEXT },
         border: Border {
             color: if primary { ACCENT } else { BORDER },
             width: 1.0,
