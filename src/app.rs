@@ -185,7 +185,7 @@ pub fn run() -> iced::Result {
 
 impl VerilogIde {
     fn new() -> (Self, Task<Message>) {
-        let mut ide = Self {
+        let ide = Self {
             project: None,
             explorer_sel: None,
             tree: None,
@@ -861,14 +861,17 @@ impl VerilogIde {
 
     fn save_dirty(&mut self) -> bool {
         self.sync_editor_to_active();
-        let mut ok = true;
+        let mut errors = Vec::new();
         for file in &mut self.open {
             if file.dirty {
                 if let Err(err) = save_file(file) {
-                    self.log_err(&err);
-                    ok = false;
+                    errors.push(err);
                 }
             }
+        }
+        let ok = errors.is_empty();
+        for err in &errors {
+            self.log_err(err);
         }
         ok
     }

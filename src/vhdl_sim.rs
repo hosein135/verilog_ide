@@ -5,7 +5,6 @@
 //! it again. The simulator stays a process of its own because a run installs a
 //! Ctrl-C handler and can exit the process.
 
-use crate::language::ProjectLanguage;
 use crate::project::{collect_vhdl_sources, OpenFile};
 use crate::sim::{self, SimResult};
 use std::path::{Path, PathBuf};
