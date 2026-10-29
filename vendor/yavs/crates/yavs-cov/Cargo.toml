@@ -1,0 +1,18 @@
+[package]
+name = "yavs-cov"
+description = "Code coverage: statement, branch and toggle counts per instance, a mergeable database, reports"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+yavs-diag.workspace = true
+saphyr-parser = "0.2.2"
+yavs-elab = { path = "../yavs-elab" }
+yavs-ir = { path = "../yavs-ir" }
+yavs-kernel = { path = "../yavs-kernel" }
+yavs-sem = { path = "../yavs-sem" }
+
+[lints]
+workspace = true

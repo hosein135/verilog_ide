@@ -1,0 +1,209 @@
+# Release on a `v[0-9]*` tag, so `vunit-yavs-v*` tags of the Python package do not start one (#165,
+# docs/decisions.md "Release trigger and first release"): the CI
+# checks on the tagged commit, a release build of `yavs` and `yavs-gui` per platform (std/ieee
+# built in; yavs-gui from the gui/ workspace, shipped in the same archive with its EUPL-1.2
+# licence, docs/decisions.md "GUI (M10)"),
+# SHA256SUMS and a GitHub pre-release with notes from release_notes/<version>.md (towncrier,
+# collected and renamed in the commit that bumps the version). The committed conformance report of
+# the tagged commit (docs/conformance.md and .json) is attached as yavs-<version>-conformance.md
+# and .json, listed in SHA256SUMS (user, 2026-10-28).
+# One archive per platform (docs/decisions.md "Release archives", #780): yavs-<version>-<target>,
+# built with the Cranelift compiled tier (`--features clift`, nothing to bundle; `--tier=auto`
+# is the default, `yavs --version` says `compiled tier: cranelift`; user 2026-10-28, #481).
+# The Linux archives are built with cargo-zigbuild against glibc 2.17 (docs/decisions.md "Linux
+# release archives") and smoke-tested in centos:7.
+# workflow_dispatch with dry_run builds and packages the same archives and conformance report as
+# workflow artifacts and publishes nothing.
+name: Release
+
+on:
+  push:
+    tags: ["v[0-9]*"]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Build and package only, do not publish
+        type: boolean
+        default: true
+      checks:
+        description: Run the CI checks first (a tag push always does)
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  checks:
+    if: github.event_name == 'push' || inputs.checks
+    uses: ./.github/workflows/ci.yml
+
+  gui-checks:
+    if: github.event_name == 'push' || inputs.checks
+    uses: ./.github/workflows/gui.yml
+
+  build:
+    needs: [checks, gui-checks]
+    # Skipped checks (a dispatch without them) do not stop the build; failed ones do.
+    if: ${{ !failure() && !cancelled() }}
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-24.04, target: x86_64-unknown-linux-gnu }
+          - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu }
+          - { os: windows-latest, target: x86_64-pc-windows-msvc }
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+            gui
+      - name: Install zig and cargo-zigbuild
+        if: runner.os == 'Linux'
+        run: |
+          python3 -m venv "$RUNNER_TEMP/zb"
+          "$RUNNER_TEMP/zb/bin/pip" install ziglang==0.14.1 cargo-zigbuild==0.23.4
+          echo "$RUNNER_TEMP/zb/bin" >> "$GITHUB_PATH"
+          rustup target add ${{ matrix.target }}
+      - name: Version
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n1)
+          if [[ "$GITHUB_REF_TYPE" == tag && "$GITHUB_REF_NAME" != "v$version" ]]; then
+            echo "tag $GITHUB_REF_NAME does not match the workspace version $version"; exit 1
+          fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+      - name: Build
+        run: |
+          t=${{ matrix.target }}
+          mkdir -p stage
+          if [[ "$RUNNER_OS" == Linux ]]; then
+            # glibc 2.17; the target directory and the archive name stay the plain triple.
+            cargo zigbuild --release --locked -p yavs --features clift --target $t.2.17
+            cp target/$t/release/yavs stage/
+            (cd gui && cargo zigbuild --release --locked --target $t.2.17)
+            cp gui/target/$t/release/yavs-gui stage/
+            # The GUI loads its windowing and OpenGL libraries at run time; only glibc is linked.
+            for b in stage/yavs stage/yavs-gui; do
+              v=$(objdump -T "$b" | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -n1)
+              echo "$b: highest glibc symbol version: $v"
+              [[ "$(printf '%s\n' GLIBC_2.17 "$v" | sort -V | tail -n1)" == GLIBC_2.17 ]] || { echo "needs more than glibc 2.17"; exit 1; }
+            done
+            readelf -d stage/yavs | grep NEEDED
+          else
+            cargo build --release --locked -p yavs --features clift
+            cp target/release/yavs.exe stage/
+            (cd gui && cargo build --release --locked)
+            cp gui/target/release/yavs-gui.exe stage/
+          fi
+      - name: Package
+        run: |
+          t=${{ matrix.target }}
+          mkdir dist
+          # The built-in std/ieee sources are Apache-2.0 (lib/LICENSE, lib/SOURCES.md); the VITAL
+          # packages are IEEE-copyrighted without a grant (lib/LICENSE-IEEE-VITAL); the Synopsys packages
+          # keep their notice (lib/LICENSE-SYNOPSYS).
+          name="yavs-$VERSION-$t"
+          dir="dist/$name"
+          mkdir -p "$dir"
+          cp LICENSE-MIT LICENSE-APACHE README.md "$dir/"
+          cp lib/LICENSE "$dir/LICENSE-IEEE"
+          cp lib/LICENSE-IEEE-VITAL lib/LICENSE-SYNOPSYS "$dir/"
+          # yavs-gui is EUPL-1.2 (libsurfer); this licence applies to the yavs-gui binary only
+          # (README.md "License").
+          cp gui/LICENSE "$dir/LICENSE-EUPL-1.2-yavs-gui"
+          cp stage/yavs* "$dir/"
+          if [[ "$RUNNER_OS" == Windows ]]; then
+            # No VHPI import library: plugins bring their own (user, 2026-10-18, #124).
+            (cd dist && 7z a -tzip "$name.zip" "$name" > /dev/null)
+          else
+            (cd dist && tar czf "$name.tar.gz" "$name")
+          fi
+          ls -l dist/*.tar.gz dist/*.zip 2>/dev/null || true
+      - name: Smoke test
+        run: |
+          t=${{ matrix.target }}
+          cd dist
+          printf 'entity t is end;\narchitecture a of t is begin\nprocess begin report "ok"; wait; end process;\nend;\n' > t.vhd
+          name="yavs-$VERSION-$t"
+          # Unpack the archive that was made, not the directory it was made from.
+          rm -rf "$name"
+          if [[ "$RUNNER_OS" == Windows ]]; then 7z x -y "$name.zip" > /dev/null; else tar xzf "$name.tar.gz"; fi
+          w=wd
+          # Smoke test: the binary alone runs a design (std/ieee built in).
+          "$name/yavs" --version | tee version.txt
+          grep -q 'compiled tier: cranelift' version.txt
+          env -u YAVS_STDLIB "$name/yavs" analyze --work=work:$w t.vhd
+          env -u YAVS_STDLIB "$name/yavs" run --work=work:$w t | grep -q ': ok'
+          env -u YAVS_STDLIB "$name/yavs" run --tier=auto --work=work:$w t | grep -q ': ok'
+          env -u YAVS_STDLIB "$name/yavs" run --tier=clift --work=work:$w t | grep -q ': ok'
+          # Without LLVM the LLVM tier is refused (fail early, no fallback).
+          if "$name/yavs" run --tier=llvm --work=work:$w t 2> err.txt; then echo "--tier=llvm ran without LLVM"; exit 1; fi
+          grep -q E0120 err.txt
+          # The GUI starts without a display for --version.
+          "$name/yavs-gui" --version
+          # Linux: the same smoke test in the oldest environment the archive claims (glibc 2.17).
+          # centos:7 is multi-arch, so the arm64 runner runs the arm64 image natively.
+          if [[ "$RUNNER_OS" == Linux ]]; then
+            docker run --rm -v "$PWD:/w" -w /w centos:7 sh -ec \
+              "rm -rf w2; ldd $name/yavs; $name/yavs --version; $name/yavs analyze --work=work:w2 t.vhd && $name/yavs run --work=work:w2 t | grep -q ': ok' && $name/yavs run --tier=clift --work=work:w2 t | grep -q ': ok' && $name/yavs-gui --version"
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: yavs-${{ matrix.target }}
+          path: |
+            dist/yavs-*.tar.gz
+            dist/yavs-*.zip
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    if: ${{ !failure() && !cancelled() }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: SHA256SUMS, notes and conformance report
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n1)
+          test -s "release_notes/$version.md" || { echo "release_notes/$version.md is missing"; exit 1; }
+          cp "release_notes/$version.md" notes.md
+          # The committed report of the tagged commit; the conformance workflow fails a tag whose report is stale.
+          for ext in md json; do
+            test -s "docs/conformance.$ext" || { echo "docs/conformance.$ext is missing"; exit 1; }
+            cp "docs/conformance.$ext" "dist/yavs-$version-conformance.$ext"
+          done
+          cd dist && sha256sum yavs-* > SHA256SUMS && cat SHA256SUMS
+          grep -q " yavs-$version-conformance.md$" SHA256SUMS
+          grep -q " yavs-$version-conformance.json$" SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SHA256SUMS-notes-and-conformance
+          path: |
+            dist/SHA256SUMS
+            dist/yavs-*-conformance.md
+            dist/yavs-*-conformance.json
+            notes.md
+          if-no-files-found: error
+      - name: GitHub release
+        if: github.event_name == 'push' || !inputs.dry_run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* --prerelease --verify-tag \
+            --title "yavs ${GITHUB_REF_NAME#v}" --notes-file notes.md

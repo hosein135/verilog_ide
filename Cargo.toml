@@ -3,7 +3,7 @@ name = "verilog-ide"
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.92"
-description = "Desktop IDE for Verilog HDL and testbenches"
+description = "Desktop IDE for Verilog and VHDL"
 license = "MIT"
 authors = ["Verilog IDE"]
 
@@ -45,6 +45,8 @@ exclude = [
     "vendor/surfer",
     "vendor/vcd-anon",
     "vendor/wave2saif",
+    # Own workspace. build.rs compiles the yavs binary from this tree.
+    "vendor/yavs",
 ]
 
 [target.'cfg(windows)'.build-dependencies]

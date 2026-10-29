@@ -3,5 +3,4 @@ xezim-core  https://github.com/aionhw/xezim-core.git     e15a759d2f9ad7725d159e4
 surfer      https://gitlab.com/surfer-project/surfer.git v0.7.0 (bd749b1f786c1c62cd67893ca71346cbe6983915)
 vcd-anon    https://gitlab.com/surfer-project/vcd-anon.git   519eb8b5b72bc7f5f07edb9066115c937be91887
 wave2saif   https://gitlab.com/surfer-project/wave2saif.git  d89109c7074fb50bee8825858afb2ccdc6001f22
-txhdl       https://github.com/filmil/hdl-txhdl.git      7a7d92d1e9cf5692c0d36e2e3af81ef838d0f1b6
-rustdv      https://github.com/rustdv/rustdv.git         f934d24253f35c7c00a1031acdfab5d123b5b606
+yavs        https://github.com/ru551n/yavs.git          7dfd2f07182b91f2a4444d4abf1adfa721f89ec4

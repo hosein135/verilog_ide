@@ -1,0 +1,13 @@
+/target
+/fuzz/target
+/fuzz/corpus
+/fuzz/artifacts
+__pycache__/
+*.pyc
+tools/discrepancies/sims.local.conf
+/gui/target
+tools/sims.local.conf
+
+# Files written by test designs run from the repository root
+/*.txt
+/*.bin

@@ -1,0 +1,17 @@
+[package]
+name = "yavs-ir"
+description = "yavs register IR: programs, functions, value layout, verifier and dump"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+postcard.workspace = true
+serde.workspace = true
+yavs-diag.workspace = true
+yavs-ffi = { path = "../yavs-ffi" }
+yavs-kernel = { path = "../yavs-kernel" }
+
+[lints]
+workspace = true

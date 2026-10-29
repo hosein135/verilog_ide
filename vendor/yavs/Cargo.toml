@@ -1,0 +1,33 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.10.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+publish = false
+repository = "https://github.com/ru551n/yavs"
+
+[workspace.dependencies]
+yavs-diag = { path = "crates/yavs-diag" }
+yavs-syntax = { path = "crates/yavs-syntax" }
+annotate-snippets = "0.12.16"
+clap = { version = "4.6.7", features = ["derive"] }
+rayon = "1.12"
+serde = { version = "1", features = ["derive"] }
+postcard = { version = "1", default-features = false, features = ["use-std"] }
+rustc-hash = "2.1"
+smallvec = { version = "1", features = ["union"] }
+yavs-logic = { path = "crates/yavs-logic" }
+yavs-prefetch = { path = "crates/yavs-prefetch" }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+
+[profile.release]
+# No line tables in release artefacts (docs/decisions.md, #600); `.symtab` stays. tools/build-bench.sh adds them
+# back for profiling builds: set CARGO_PROFILE_RELEASE_DEBUG=line-tables-only on any other release build.
+debug = false

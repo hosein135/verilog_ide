@@ -1,0 +1,1 @@
+# Files of tests/diag/sem expected to fail until their slice lands (see diag_sem.rs).

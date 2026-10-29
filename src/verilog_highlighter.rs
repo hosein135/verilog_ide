@@ -82,6 +82,7 @@ struct ParseState {
 pub struct Settings {
     pub enabled: bool,
     pub rust: bool,
+    pub vhdl: bool,
 }
 
 #[derive(Debug)]
@@ -128,7 +129,12 @@ impl highlighter::Highlighter for VerilogHighlighter {
             .last()
             .unwrap_or(&ParseState::default());
 
-        let spans = highlight_line(line, &mut state, self.settings.rust);
+        let spans = highlight_line(
+            line,
+            &mut state,
+            self.settings.rust,
+            self.settings.vhdl,
+        );
 
         self.snapshots.push(state);
         self.current_line += 1;
@@ -141,7 +147,12 @@ impl highlighter::Highlighter for VerilogHighlighter {
     }
 }
 
-fn highlight_line(line: &str, state: &mut ParseState, rust: bool) -> Vec<(Range<usize>, Highlight)> {
+fn highlight_line(
+    line: &str,
+    state: &mut ParseState,
+    rust: bool,
+    vhdl: bool,
+) -> Vec<(Range<usize>, Highlight)> {
     let mut spans = Vec::new();
     let bytes = line.as_bytes();
     let mut i = 0;
@@ -179,7 +190,12 @@ fn highlight_line(line: &str, state: &mut ParseState, rust: bool) -> Vec<(Range<
             continue;
         }
 
-        if b == b'/' && bytes.get(i + 1) == Some(&b'/') {
+        if vhdl && b == b'-' && bytes.get(i + 1) == Some(&b'-') {
+            push_span(&mut spans, i, bytes.len(), TokenKind::Comment);
+            break;
+        }
+
+        if !vhdl && b == b'/' && bytes.get(i + 1) == Some(&b'/') {
             push_span(&mut spans, i, bytes.len(), TokenKind::Comment);
             break;
         }
@@ -223,7 +239,7 @@ fn highlight_line(line: &str, state: &mut ParseState, rust: bool) -> Vec<(Range<
             continue;
         }
 
-        if !rust && b == b'\'' && bytes.get(i + 1).is_some_and(|c| c.is_ascii_digit()) {
+        if !rust && !vhdl && b == b'\'' && bytes.get(i + 1).is_some_and(|c| c.is_ascii_digit()) {
             let start = i;
             i += 2;
             while i < bytes.len()
@@ -282,7 +298,7 @@ fn highlight_line(line: &str, state: &mut ParseState, rust: bool) -> Vec<(Range<
                 i += 1;
             }
             let word = &line[start..i];
-            let kind = if is_keyword(word, rust) {
+            let kind = if is_keyword(word, rust, vhdl) {
                 TokenKind::Keyword
             } else {
                 i = start + word.len();
@@ -324,9 +340,13 @@ fn merge_spans(spans: Vec<(Range<usize>, Highlight)>) -> Vec<(Range<usize>, High
     merged
 }
 
-fn is_keyword(word: &str, rust: bool) -> bool {
+fn is_keyword(word: &str, rust: bool, vhdl: bool) -> bool {
     if rust {
         RUST_KEYWORDS.contains(&word)
+    } else if vhdl {
+        VHDL_KEYWORDS
+            .iter()
+            .any(|keyword| keyword.eq_ignore_ascii_case(word))
     } else {
         KEYWORDS.contains(&word)
     }
@@ -346,6 +366,30 @@ pub fn syntax_enabled_for_path(path: &Path) -> bool {
             .and_then(|e| e.to_str())
             .map(|s| s.to_ascii_lowercase())
             .as_deref(),
-        Some("v" | "sv" | "vh" | "svh" | "vl")
+        Some("v" | "sv" | "vh" | "svh" | "vl" | "vhd" | "vhdl")
     )
 }
+
+pub fn vhdl_syntax_for_path(path: &Path) -> bool {
+    matches!(
+        path.extension()
+            .and_then(|ext| ext.to_str())
+            .map(|ext| ext.to_ascii_lowercase())
+            .as_deref(),
+        Some("vhd" | "vhdl")
+    )
+}
+
+const VHDL_KEYWORDS: &[&str] = &[
+    "abs", "access", "after", "alias", "all", "and", "architecture", "array", "assert",
+    "attribute", "begin", "block", "body", "buffer", "bus", "case", "component",
+    "configuration", "constant", "disconnect", "downto", "else", "elsif", "end", "entity",
+    "exit", "file", "for", "function", "generate", "generic", "group", "guarded", "if",
+    "impure", "in", "inertial", "inout", "is", "label", "library", "linkage", "literal",
+    "loop", "map", "mod", "nand", "new", "next", "nor", "not", "null", "of", "on", "open",
+    "or", "others", "out", "package", "port", "postponed", "procedure", "process", "pure",
+    "range", "record", "register", "reject", "rem", "report", "return", "rol", "ror",
+    "select", "severity", "signal", "shared", "sla", "sll", "sra", "srl", "subtype", "then",
+    "to", "transport", "type", "unaffected", "units", "until", "use", "variable", "wait",
+    "when", "while", "with", "xnor", "xor",
+];

@@ -22,7 +22,8 @@ pub struct SimJob {
 pub struct SimResult {
     pub ok: bool,
     pub log: String,
-    pub vcd: Option<PathBuf>,
+    /// Waveform written by the simulator (`.vcd` from xezim, `.fst` from yavs).
+    pub wave: Option<PathBuf>,
 }
 
 impl SimJob {
@@ -104,7 +105,7 @@ pub async fn run_job_async(job: SimJob) -> SimResult {
         .unwrap_or_else(|e| SimResult {
             ok: false,
             log: format!("Simulation task failed: {e}\n"),
-            vcd: None,
+            wave: None,
         })
 }
 
@@ -161,7 +162,7 @@ fn run_job(job: &SimJob) -> SimResult {
             SimResult {
                 ok: true,
                 log,
-                vcd,
+                wave: vcd,
             }
         }
         Err(e) => {
@@ -172,7 +173,7 @@ fn run_job(job: &SimJob) -> SimResult {
             SimResult {
                 ok: false,
                 log,
-                vcd: None,
+                wave: None,
             }
         }
     }
@@ -416,7 +417,7 @@ mod tests {
         let job = prepare_job(&root, None, &[]).expect("prepare half adder");
         let result = run_job(&job);
         assert!(result.ok, "{}", result.log);
-        let vcd = result.vcd.expect("vcd path");
+        let vcd = result.wave.expect("vcd path");
         let text = std::fs::read_to_string(&vcd).unwrap_or_default();
         assert!(
             text.contains("$var") || text.contains("$timescale"),

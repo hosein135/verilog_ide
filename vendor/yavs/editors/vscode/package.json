@@ -1,0 +1,267 @@
+{
+  "name": "yavs-debug",
+  "displayName": "yavs VHDL debugger",
+  "description": "Debug VHDL testbenches with the yavs simulator (Debug Adapter Protocol).",
+  "version": "0.1.0",
+  "publisher": "ru551n",
+  "license": "MIT OR Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ru551n/yavs"
+  },
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Debuggers"
+  ],
+  "main": "./extension.js",
+  "activationEvents": [
+    "onDebugResolve:yavs",
+    "onDebugDynamicConfigurations:yavs"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "vhdl",
+        "aliases": [
+          "VHDL"
+        ],
+        "extensions": [
+          ".vhd",
+          ".vhdl"
+        ]
+      }
+    ],
+    "breakpoints": [
+      {
+        "language": "vhdl"
+      }
+    ],
+    "commands": [
+      {
+        "command": "yavs.runFor",
+        "title": "Run for...",
+        "category": "yavs"
+      },
+      {
+        "command": "yavs.runUntil",
+        "title": "Run until...",
+        "category": "yavs"
+      },
+      {
+        "command": "yavs.stepDelta",
+        "title": "Step to the next delta",
+        "category": "yavs"
+      },
+      {
+        "command": "yavs.stepTimestep",
+        "title": "Step to the next time step",
+        "category": "yavs"
+      },
+      {
+        "command": "yavs.breakOnValue",
+        "title": "Break when a signal equals...",
+        "category": "yavs"
+      },
+      {
+        "command": "yavs.clearValueBreaks",
+        "title": "Clear signal value breakpoints",
+        "category": "yavs"
+      },
+      {
+        "command": "yavs.force",
+        "title": "Force a signal...",
+        "category": "yavs"
+      },
+      {
+        "command": "yavs.deposit",
+        "title": "Deposit a signal value...",
+        "category": "yavs"
+      },
+      {
+        "command": "yavs.release",
+        "title": "Release a forced signal...",
+        "category": "yavs"
+      }
+    ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "yavs.runFor",
+          "when": "debugType == 'yavs'"
+        },
+        {
+          "command": "yavs.runUntil",
+          "when": "debugType == 'yavs'"
+        },
+        {
+          "command": "yavs.stepDelta",
+          "when": "debugType == 'yavs'"
+        },
+        {
+          "command": "yavs.stepTimestep",
+          "when": "debugType == 'yavs'"
+        },
+        {
+          "command": "yavs.breakOnValue",
+          "when": "debugType == 'yavs'"
+        },
+        {
+          "command": "yavs.clearValueBreaks",
+          "when": "debugType == 'yavs'"
+        },
+        {
+          "command": "yavs.force",
+          "when": "debugType == 'yavs'"
+        },
+        {
+          "command": "yavs.deposit",
+          "when": "debugType == 'yavs'"
+        },
+        {
+          "command": "yavs.release",
+          "when": "debugType == 'yavs'"
+        }
+      ],
+      "debug/variables/context": [
+        {
+          "command": "yavs.force",
+          "when": "debugType == 'yavs' && debugProtocolVariableMenuContext == 'signal'"
+        },
+        {
+          "command": "yavs.deposit",
+          "when": "debugType == 'yavs' && debugProtocolVariableMenuContext == 'signal'"
+        },
+        {
+          "command": "yavs.release",
+          "when": "debugType == 'yavs' && debugProtocolVariableMenuContext == 'signal'"
+        }
+      ]
+    },
+    "debuggers": [
+      {
+        "type": "yavs",
+        "label": "yavs",
+        "languages": [
+          "vhdl"
+        ],
+        "configurationAttributes": {
+          "launch": {
+            "required": [
+              "top"
+            ],
+            "properties": {
+              "top": {
+                "type": "string",
+                "description": "Top level: ENTITY, ENTITY.ARCH or a configuration in the work library."
+              },
+              "work": {
+                "type": "string",
+                "description": "The work library, NAME:PATH.",
+                "default": "work:${workspaceFolder}/.yavs/work"
+              },
+              "libraries": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Other libraries, NAME:PATH (--map).",
+                "default": []
+              },
+              "sources": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Files analyzed into the work library before the run, in order (empty: analyze yourself).",
+                "default": []
+              },
+              "std": {
+                "type": "string",
+                "enum": [
+                  "2008",
+                  "2019"
+                ],
+                "description": "Language standard of the sources and of std/ieee."
+              },
+              "generics": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "description": "Generics of the top level, NAME: VALUE (-gNAME=VALUE).",
+                "default": {}
+              },
+              "args": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "More arguments for yavs run, such as --stop-time=1ms.",
+                "default": []
+              },
+              "stopOnEntry": {
+                "type": "boolean",
+                "description": "Stop at the first statement.",
+                "default": false
+              },
+              "yavsPath": {
+                "type": "string",
+                "description": "The yavs executable.",
+                "default": "yavs"
+              },
+              "cwd": {
+                "type": "string",
+                "description": "Working directory of yavs.",
+                "default": "${workspaceFolder}"
+              },
+              "port": {
+                "type": "number",
+                "description": "Attach to a running `yavs run --dap=PORT` instead of starting yavs."
+              }
+            }
+          }
+        },
+        "initialConfigurations": [
+          {
+            "type": "yavs",
+            "request": "launch",
+            "name": "Debug testbench",
+            "top": "tb",
+            "work": "work:${workspaceFolder}/.yavs/work",
+            "sources": [
+              "${workspaceFolder}/tb.vhd"
+            ]
+          }
+        ],
+        "configurationSnippets": [
+          {
+            "label": "yavs: Debug testbench",
+            "description": "Analyze and debug a VHDL top level with yavs.",
+            "body": {
+              "type": "yavs",
+              "request": "launch",
+              "name": "Debug ${1:tb}",
+              "top": "${1:tb}",
+              "work": "work:^\"\\${workspaceFolder}/.yavs/work\"",
+              "sources": [
+                "^\"\\${workspaceFolder}/${1:tb}.vhd\""
+              ]
+            }
+          },
+          {
+            "label": "yavs: Attach to yavs",
+            "description": "Attach to a running yavs run --dap=PORT, for example one started by a test runner.",
+            "body": {
+              "type": "yavs",
+              "request": "launch",
+              "name": "Attach to yavs",
+              "port": "^4711"
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

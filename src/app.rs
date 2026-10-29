@@ -5,15 +5,17 @@ use crate::editor::{
     EDITOR_PADDING,
 };
 use crate::icons::{self, Kind};
+use crate::language::ProjectLanguage;
 use crate::verilog_highlighter::{
     self, Settings as VerilogHighlightSettings, VerilogHighlighter,
 };
 use crate::project::{
-    collect_dir_paths, initial_editor_files, is_vcd_path, is_wave_path, load_file,
-    locate_half_adder_sample, save_file, FileView, IdeProject, OpenFile, TreeNode,
+    self, collect_dir_paths, initial_editor_files, is_vcd_path, is_wave_path, load_file,
+    save_file, FileView, IdeProject, LoadError, OpenFile, TreeNode,
 };
 use crate::sim::{self, SimResult};
 use crate::templates;
+use crate::vhdl_sim;
 use crate::wave_tools::{self, WaveToolKind, WaveToolOutput};
 use crate::waveform::{self, ViewMode, WaveNav, WaveView};
 use iced::keyboard::{self, Key};
@@ -64,6 +66,7 @@ pub(crate) enum BottomTab {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum TopMenu {
     File,
+    Samples,
     Edit,
     View,
     Run,
@@ -74,12 +77,23 @@ pub(crate) enum TopMenu {
 enum Dialog {
     NewFile { name: String },
     NewFolder { name: String },
+    RenameFile { from: PathBuf, name: String },
+    DeleteFile { path: PathBuf },
     Find { query: String },
     About,
+    NewProject { language: ProjectLanguage, name: String },
+    ChooseLanguage { root: PathBuf },
+}
+
+enum OpenMode {
+    Auto,
+    Text,
+    Wave,
 }
 
 pub struct VerilogIde {
     project: Option<IdeProject>,
+    explorer_sel: Option<PathBuf>,
     tree: Option<TreeNode>,
     expanded: HashSet<PathBuf>,
     open: Vec<OpenFile>,
@@ -97,7 +111,6 @@ pub struct VerilogIde {
     search_query: String,
     sim_running: bool,
     tool_running: bool,
-    view_mode: ViewMode,
     waveforms: HashMap<PathBuf, WaveStatus>,
 }
 
@@ -113,9 +126,14 @@ pub enum Message {
     ProjectPicked(Result<Option<PathBuf>, DialogError>),
     OpenFilePicker,
     FilePicked(Result<Option<PathBuf>, DialogError>),
-    CreateSample,
+    ShowNewProject(ProjectLanguage),
+    OpenSample(ProjectLanguage),
+    LanguageChosen(ProjectLanguage),
     OpenFile(PathBuf),
     OpenAs(PathBuf, ViewMode),
+    ShowRename,
+    ShowDelete,
+    DumpModeHint,
     ToggleDir(PathBuf),
     SelectTab(usize),
     CloseTab(usize),
@@ -143,7 +161,6 @@ pub enum Message {
     AnonymizeVcd,
     VcdToSaif,
     WaveToolFinished(Result<WaveToolOutput, String>),
-    SetViewMode(ViewMode),
     WaveNav(WaveNav),
     WaveLoaded(PathBuf, Result<WaveView, String>),
 }
@@ -170,6 +187,7 @@ impl VerilogIde {
     fn new() -> (Self, Task<Message>) {
         let mut ide = Self {
             project: None,
+            explorer_sel: None,
             tree: None,
             expanded: HashSet::new(),
             open: Vec::new(),
@@ -177,27 +195,19 @@ impl VerilogIde {
             editor_content: text_editor::Content::new(),
             editor_scroll_y: 0.0,
             editor_view_h: 480.0,
-            console: "Verilog IDE ready.\n".into(),
+            console: "Create a new project or open an existing folder.\n".into(),
             problems: Vec::new(),
             bottom: BottomTab::Console,
             bottom_visible: true,
-            status: "Ready".into(),
+            status: "No project".into(),
             dialog: None,
             menu_open: None,
             search_query: String::new(),
             sim_running: false,
             tool_running: false,
-            view_mode: ViewMode::Waveform,
             waveforms: HashMap::new(),
         };
-        let task = if let Some(sample) = locate_half_adder_sample() {
-            ide.open_project(sample);
-            ide.log("Half adder is open. Press F5 to simulate with xezim.\n");
-            editor::scroll_to_y(0.0)
-        } else {
-            Task::none()
-        };
-        (ide, task)
+        (ide, Task::none())
     }
 
     fn subscription(&self) -> Subscription<Message> {
@@ -229,8 +239,8 @@ impl VerilogIde {
                 Task::perform(pick_folder("Open Folder"), Message::ProjectPicked)
             }
             Message::ProjectPicked(Ok(Some(path))) => {
-                self.open_folder_path(path);
-                editor::scroll_to_y(0.0)
+                let load = self.open_folder_path(path);
+                Task::batch([load, editor::scroll_to_y(0.0)])
             }
             Message::ProjectPicked(_) => Task::none(),
             Message::OpenFilePicker => {
@@ -239,42 +249,86 @@ impl VerilogIde {
             }
             Message::FilePicked(Ok(Some(path))) => {
                 let load = if path.is_dir() {
-                    self.open_folder_path(path);
-                    Task::none()
-                } else {
-                    if self.project.is_none() {
-                        if let Some(parent) = path.parent() {
-                            self.open_project(parent.to_path_buf());
-                        }
+                    self.open_folder_path(path)
+                } else if self.project.is_none() {
+                    if let Some(parent) = path.parent() {
+                        let opened = self.open_project(parent.to_path_buf(), None);
+                        let file = self.open_path(&path);
+                        Task::batch([opened, file])
+                    } else {
+                        self.log_err(&format!("Not a folder: {}", path.display()));
+                        Task::none()
                     }
+                } else {
                     self.open_path(&path)
                 };
                 Task::batch([load, editor::scroll_to_y(0.0)])
             }
             Message::FilePicked(_) => Task::none(),
-            Message::CreateSample => {
+            Message::ShowNewProject(language) => {
                 self.menu_open = None;
-                if let Some(sample) = locate_half_adder_sample() {
-                    self.open_project(sample);
-                    self.log(
-                        "Opened the half-adder sample (half_adder.v + half_adder_tb.v).\nPress F5 to simulate with xezim and write half_adder.vcd.\n",
-                    );
-                    editor::scroll_to_y(0.0)
+                self.dialog = Some(Dialog::NewProject {
+                    language,
+                    name: "half_adder".into(),
+                });
+                Task::none()
+            }
+            Message::OpenSample(language) => {
+                self.menu_open = None;
+                if let Some(sample) = project::locate_language_sample(language) {
+                    let load = self.open_project(sample, Some(language));
+                    let which = match language {
+                        ProjectLanguage::Verilog => {
+                            "Opened the Verilog half adder. Press F5 to simulate with xezim.\n"
+                        }
+                        ProjectLanguage::Vhdl => {
+                            "Opened the VHDL half adder. Press F5 to simulate with yavs.\n"
+                        }
+                    };
+                    self.log(which);
+                    Task::batch([load, editor::scroll_to_y(0.0)])
                 } else {
-                    self.log_err("Bundled half-adder sample was not found (samples/half_adder).");
+                    self.log_err("That bundled sample was not found under samples/.");
                     Task::none()
                 }
             }
+            Message::LanguageChosen(language) => {
+                let root = match self.dialog.take() {
+                    Some(Dialog::ChooseLanguage { root }) => root,
+                    other => {
+                        self.dialog = other;
+                        return Task::none();
+                    }
+                };
+                let load = self.open_project(root, Some(language));
+                Task::batch([load, editor::scroll_to_y(0.0)])
+            }
+            Message::ShowRename => {
+                self.show_rename();
+                Task::none()
+            }
+            Message::ShowDelete => {
+                self.show_delete();
+                Task::none()
+            }
+            Message::DumpModeHint => {
+                self.menu_open = None;
+                self.status = "Open a .vcd, .fst, or .ghw file to choose Text or Wave.".into();
+                Task::none()
+            }
             Message::CloseProject => {
                 self.menu_open = None;
-                self.sync_editor_to_active();
+                if !self.save_dirty() {
+                    return Task::none();
+                }
                 self.project = None;
                 self.tree = None;
+                self.explorer_sel = None;
                 self.expanded.clear();
                 self.open.clear();
                 self.active = None;
                 self.waveforms.clear();
-                self.status = "Closed folder".into();
+                self.status = "No project".into();
                 self.reload_editor()
             }
             Message::RefreshExplorer => {
@@ -289,11 +343,15 @@ impl VerilogIde {
             }
             Message::OpenAs(path, mode) => {
                 self.menu_open = None;
-                self.view_mode = mode;
-                let load = self.open_path(&path);
+                let mode = match mode {
+                    ViewMode::TextEditor => OpenMode::Text,
+                    ViewMode::Waveform => OpenMode::Wave,
+                };
+                let load = self.open_in(&path, mode);
                 Task::batch([load, editor::scroll_to_y(0.0)])
             }
             Message::ToggleDir(path) => {
+                self.explorer_sel = Some(path.clone());
                 if self.expanded.contains(&path) {
                     self.expanded.remove(&path);
                 } else {
@@ -394,8 +452,13 @@ impl VerilogIde {
             }
             Message::ShowNewFile => {
                 self.menu_open = None;
+                let ext = self
+                    .project
+                    .as_ref()
+                    .map(|project| project.language.source_extension())
+                    .unwrap_or("v");
                 self.dialog = Some(Dialog::NewFile {
-                    name: "untitled.v".into(),
+                    name: format!("untitled.{ext}"),
                 });
                 Task::none()
             }
@@ -422,7 +485,9 @@ impl VerilogIde {
                 match &mut self.dialog {
                     Some(Dialog::NewFile { name }) => *name = value,
                     Some(Dialog::NewFolder { name }) => *name = value,
+                    Some(Dialog::RenameFile { name, .. }) => *name = value,
                     Some(Dialog::Find { query }) => *query = value,
+                    Some(Dialog::NewProject { name, .. }) => *name = value,
                     _ => {}
                 }
                 Task::none()
@@ -436,12 +501,24 @@ impl VerilogIde {
                             return editor::scroll_to_y(0.0);
                         }
                         Dialog::NewFolder { name } => self.create_folder(&name),
+                        Dialog::RenameFile { from, name } => self.rename_selected(&from, &name),
+                        Dialog::DeleteFile { path } => self.delete_selected(&path),
                         Dialog::Find { query } => {
                             self.search_query = query;
                             self.find_next();
                             return self.ensure_cursor_visible();
                         }
                         Dialog::About => {}
+                        Dialog::NewProject { language, name } => {
+                            match project::create_project(&name, language) {
+                                Ok(created) => {
+                                    let root = created.root.clone();
+                                    return self.open_project(root, Some(language));
+                                }
+                                Err(err) => self.log_err(&err),
+                            }
+                        }
+                        Dialog::ChooseLanguage { .. } => {}
                     }
                 }
                 Task::none()
@@ -482,31 +559,38 @@ impl VerilogIde {
                         self.console.push('\n');
                     }
                 }
+                let tool = self
+                    .project
+                    .as_ref()
+                    .map(|project| project.language.simulator())
+                    .unwrap_or("simulator");
+                self.refresh_tree();
                 if !result.ok {
                     self.problems
-                        .push("xezim simulation failed. See OUTPUT.".into());
+                        .push(format!("{tool} simulation failed. See OUTPUT."));
                     self.status = "Simulation failed".into();
-                } else if let Some(vcd) = result.vcd {
-                    self.status = format!("Wrote {}", vcd.display());
-                    self.refresh_tree();
-                    self.waveforms.remove(&vcd);
-                    if self.view_mode == ViewMode::Waveform {
-                        let load = self.open_path(&vcd);
-                        return Task::batch([load, editor::scroll_to_y(0.0)]);
+                }
+                if let Some(wave) = result.wave {
+                    if result.ok {
+                        self.status = format!("Wrote {}", wave.display());
                     }
-                } else {
-                    self.status = "Simulation finished (no VCD)".into();
-                    self.problems.push(
-                        "Simulation finished but no .vcd was produced. Add $dumpfile / $dumpvars to the testbench."
-                            .into(),
-                    );
+                    self.waveforms.remove(&wave);
+                    let load = self.open_in(&wave, OpenMode::Wave);
+                    return Task::batch([load, editor::scroll_to_y(0.0)]);
+                }
+                if result.ok {
+                    self.status = "Simulation finished (no waveform)".into();
+                    let hint = match self.project.as_ref().map(|project| project.language) {
+                        Some(ProjectLanguage::Vhdl) => {
+                            "Simulation finished but no .fst was produced."
+                        }
+                        _ => {
+                            "Simulation finished but no .vcd was produced. Add $dumpfile / $dumpvars to the testbench."
+                        }
+                    };
+                    self.problems.push(hint.into());
                 }
                 Task::none()
-            }
-            Message::SetViewMode(mode) => {
-                self.menu_open = None;
-                self.view_mode = mode;
-                self.apply_view_mode_to_open_files()
             }
             Message::WaveNav(nav) => {
                 if let Some(path) = self.active_path().cloned() {
@@ -572,24 +656,45 @@ impl VerilogIde {
             return Task::none();
         }
 
-        let Some(root) = self.project_root() else {
-            self.log_err("Open a folder first (File → Open Folder), then click Run.");
+        let Some(project) = self.project.clone() else {
+            self.log_err("Create or open a Verilog or VHDL project, then click Run.");
             return Task::none();
         };
         let active = self.active_path().cloned();
-        match sim::prepare_job(&root, active.as_deref(), &self.open) {
-            Ok(job) => {
-                self.sim_running = true;
-                self.bottom = BottomTab::Console;
-                self.bottom_visible = true;
-                self.status = "Running xezim…".into();
-                self.log("Simulating with xezim (--wave) to generate a VCD…\n");
-                self.log(&format!("{}\n", job.command_preview()));
-                Task::perform(sim::run_job_async(job), Message::SimFinished)
-            }
-            Err(e) => {
-                self.log_err(&e);
-                Task::none()
+        let root = project.root.clone();
+        match project.language {
+            ProjectLanguage::Verilog => match sim::prepare_job(&root, active.as_deref(), &self.open)
+            {
+                Ok(job) => {
+                    self.sim_running = true;
+                    self.bottom = BottomTab::Console;
+                    self.bottom_visible = true;
+                    self.status = "Running xezim…".into();
+                    self.log("Simulating with xezim (--wave) to generate a VCD…\n");
+                    self.log(&format!("{}\n", job.command_preview()));
+                    Task::perform(sim::run_job_async(job), Message::SimFinished)
+                }
+                Err(err) => {
+                    self.log_err(&err);
+                    Task::none()
+                }
+            },
+            ProjectLanguage::Vhdl => {
+                match vhdl_sim::prepare_job(&root, active.as_deref(), &self.open) {
+                    Ok(job) => {
+                        self.sim_running = true;
+                        self.bottom = BottomTab::Console;
+                        self.bottom_visible = true;
+                        self.status = "Running yavs…".into();
+                        self.log("Simulating with yavs (--wave) to generate an FST…\n");
+                        self.log(&format!("{}\n", job.command_preview()));
+                        Task::perform(vhdl_sim::run_job_async(job), Message::SimFinished)
+                    }
+                    Err(err) => {
+                        self.log_err(&err);
+                        Task::none()
+                    }
+                }
             }
         }
     }
@@ -639,11 +744,13 @@ impl VerilogIde {
         self.log(&output.log);
         self.status = format!("Wrote {}", output.output.display());
         self.refresh_tree();
-        if output.open_as_wave {
-            self.view_mode = ViewMode::Waveform;
-        }
         self.drop_open_path(&output.output);
-        let load = self.open_path(&output.output);
+        let mode = if output.open_as_wave {
+            OpenMode::Wave
+        } else {
+            OpenMode::Auto
+        };
+        let load = self.open_in(&output.output, mode);
         Task::batch([load, editor::scroll_to_y(0.0)])
     }
 
@@ -669,7 +776,7 @@ impl VerilogIde {
         }
     }
 
-    fn open_folder_path(&mut self, path: PathBuf) {
+    fn open_folder_path(&mut self, path: PathBuf) -> Task<Message> {
         let folder = if path.is_dir() {
             path
         } else if let Some(parent) = path.parent() {
@@ -681,20 +788,40 @@ impl VerilogIde {
             parent.to_path_buf()
         } else {
             self.log_err(&format!("Not a folder: {}", path.display()));
-            return;
+            return Task::none();
         };
 
         if !folder.is_dir() {
             self.log_err(&format!("Not a folder: {}", folder.display()));
-            return;
+            return Task::none();
         }
 
-        self.open_project(folder);
+        self.open_project(folder, None)
     }
 
-    fn open_project(&mut self, root: PathBuf) {
-        let project = IdeProject::new(root);
-        self.log(&format!("Opened folder: {}\n", project.root.display()));
+    fn open_project(&mut self, root: PathBuf, language: Option<ProjectLanguage>) -> Task<Message> {
+        if !self.save_dirty() {
+            return Task::none();
+        }
+        let project = match project::load_project(root.clone(), language) {
+            Ok(project) => project,
+            Err(LoadError::NeedLanguage) => {
+                self.dialog = Some(Dialog::ChooseLanguage { root });
+                self.status = "Choose Verilog or VHDL for this folder.".into();
+                return Task::none();
+            }
+            Err(LoadError::Io(err)) => {
+                self.log_err(&err);
+                return Task::none();
+            }
+        };
+        self.log(&format!(
+            "Opened {} project {} ({})\nRun simulates with {}.\n",
+            project.language.label(),
+            project.name,
+            project.root.display(),
+            project.language.simulator()
+        ));
         let tree = project.build_tree();
         self.expanded.clear();
         self.expanded.insert(project.root.clone());
@@ -702,32 +829,68 @@ impl VerilogIde {
         collect_dir_paths(&tree, &mut dirs);
         self.expanded.extend(dirs);
         self.tree = Some(tree);
+        self.explorer_sel = Some(project.root.clone());
+        let language = project.language;
+        let root = project.root.clone();
         self.project = Some(project);
+        project::remember_project(self.project.as_ref().unwrap());
         self.open.clear();
         self.active = None;
         self.waveforms.clear();
         self.status = format!(
-            "Opened folder: {}",
-            self.project.as_ref().unwrap().root.display()
+            "{} · {}",
+            self.project.as_ref().unwrap().name,
+            language.label()
         );
         self.load_active_into_editor();
 
-        if let Some(root) = self.project.as_ref().map(|p| p.root.clone()) {
-            for path in initial_editor_files(&root) {
-                let _ = self.open_path(&path);
-            }
-            if !self.open.is_empty() {
-                self.active = Some(0);
-                self.load_active_into_editor();
-            }
+        let mut tasks = Vec::new();
+        for path in initial_editor_files(&root, language) {
+            tasks.push(self.open_path(&path));
+        }
+        if !self.open.is_empty() {
+            self.active = Some(0);
+            self.load_active_into_editor();
+        }
+        if tasks.is_empty() {
+            Task::none()
+        } else {
+            Task::batch(tasks)
         }
     }
 
-    fn open_path(&mut self, path: &Path) -> Task<Message> {
+    fn save_dirty(&mut self) -> bool {
         self.sync_editor_to_active();
-        let want_wave = is_wave_path(path) && self.view_mode == ViewMode::Waveform;
+        let mut ok = true;
+        for file in &mut self.open {
+            if file.dirty {
+                if let Err(err) = save_file(file) {
+                    self.log_err(&err);
+                    ok = false;
+                }
+            }
+        }
+        ok
+    }
 
-        if let Some(idx) = self.open.iter().position(|f| f.path == path) {
+    fn open_path(&mut self, path: &Path) -> Task<Message> {
+        self.open_in(path, OpenMode::Auto)
+    }
+
+    fn open_in(&mut self, path: &Path, mode: OpenMode) -> Task<Message> {
+        self.sync_editor_to_active();
+        self.explorer_sel = Some(path.to_path_buf());
+        let existing = self.open.iter().position(|file| file.path == path);
+        let want_wave = match mode {
+            OpenMode::Wave => true,
+            OpenMode::Text => false,
+            OpenMode::Auto => existing
+                .and_then(|idx| self.open.get(idx))
+                .map(|file| file.view == FileView::Waveform)
+                .unwrap_or_else(|| is_wave_path(path)),
+        } && is_wave_path(path);
+
+        if let Some(idx) = existing {
             self.active = Some(idx);
             if let Some(file) = self.open.get_mut(idx) {
                 file.view = if want_wave {
@@ -735,6 +898,11 @@ impl VerilogIde {
                 } else {
                     FileView::Text
                 };
+                if !want_wave && file.content.is_empty() {
+                    if let Ok(loaded) = load_file(path) {
+                        file.content = loaded.content;
+                    }
+                }
             }
             let load = if want_wave {
                 self.ensure_wave_loaded(path)
@@ -747,16 +915,16 @@ impl VerilogIde {
 
         let mut file = match load_file(path) {
             Ok(file) => file,
-            Err(e) if want_wave => OpenFile {
+            Err(_) if want_wave => OpenFile {
                 path: path.to_path_buf(),
                 content: String::new(),
                 dirty: false,
                 cursor: 0,
                 view: FileView::Waveform,
             },
-            Err(e) => {
-                self.log_err(&e);
-                self.problems.push(e);
+            Err(err) => {
+                self.log_err(&err);
+                self.problems.push(err);
                 return Task::none();
             }
         };
@@ -791,42 +959,6 @@ impl VerilogIde {
             Task::perform(waveform::load_wave_async(path.to_path_buf()), |(p, r)| {
                 Message::WaveLoaded(p, r)
             })
-        }
-    }
-
-    fn apply_view_mode_to_open_files(&mut self) -> Task<Message> {
-        self.sync_editor_to_active();
-        let mode = self.view_mode;
-        let paths: Vec<PathBuf> = self.open.iter().map(|f| f.path.clone()).collect();
-        let mut tasks = Vec::new();
-        for path in &paths {
-            if !is_wave_path(path) {
-                continue;
-            }
-            if let Some(file) = self.open.iter_mut().find(|f| f.path == *path) {
-                file.view = match mode {
-                    ViewMode::Waveform => FileView::Waveform,
-                    ViewMode::TextEditor => FileView::Text,
-                };
-                if mode == ViewMode::TextEditor && file.content.is_empty() {
-                    if let Ok(loaded) = load_file(path) {
-                        file.content = loaded.content;
-                    }
-                }
-            }
-            if mode == ViewMode::Waveform {
-                tasks.push(self.ensure_wave_loaded(path));
-            }
-        }
-        self.load_active_into_editor();
-        if tasks.is_empty() {
-            if self.active_is_waveform() {
-                Task::none()
-            } else {
-                editor::scroll_to_y(0.0)
-            }
-        } else {
-            Task::batch(tasks)
         }
     }
 
@@ -928,37 +1060,112 @@ impl VerilogIde {
         self.project.as_ref().map(|p| p.root.clone())
     }
 
-    fn create_file(&mut self, name: &str) {
-        let name = name.trim();
-        if name.is_empty() {
-            return;
+    fn destination_dir(&self) -> Option<PathBuf> {
+        let root = self.project_root()?;
+        if let Some(selected) = &self.explorer_sel {
+            if selected.starts_with(&root) {
+                if selected.is_dir() {
+                    return Some(selected.clone());
+                }
+                if let Some(parent) = selected.parent() {
+                    if parent.starts_with(&root) {
+                        return Some(parent.to_path_buf());
+                    }
+                }
+            }
         }
-        let Some(root) = self.project_root() else {
-            self.log_err("Open a folder first (File → Open Folder).");
+        Some(root)
+    }
+
+    fn file_target(&self) -> Option<PathBuf> {
+        if let Some(path) = &self.explorer_sel {
+            if path.is_file() {
+                return Some(path.clone());
+            }
+        }
+        self.active_path().filter(|path| path.is_file()).cloned()
+    }
+
+    fn show_rename(&mut self) {
+        self.menu_open = None;
+        match self.file_target() {
+            Some(path) => {
+                let name = path
+                    .file_name()
+                    .map(|name| name.to_string_lossy().to_string())
+                    .unwrap_or_default();
+                self.dialog = Some(Dialog::RenameFile { from: path, name });
+            }
+            None => self.log_err("Select a file to rename."),
+        }
+    }
+
+    fn show_delete(&mut self) {
+        self.menu_open = None;
+        match self.file_target() {
+            Some(path) => self.dialog = Some(Dialog::DeleteFile { path }),
+            None => self.log_err("Select a file to delete."),
+        }
+    }
+
+    fn rename_selected(&mut self, from: &Path, name: &str) {
+        match project::rename_file(from, name) {
+            Ok(dest) => {
+                if let Some(file) = self.open.iter_mut().find(|file| file.path == from) {
+                    file.path = dest.clone();
+                }
+                if let Some(wave) = self.waveforms.remove(from) {
+                    self.waveforms.insert(dest.clone(), wave);
+                }
+                self.explorer_sel = Some(dest.clone());
+                self.refresh_tree();
+                self.log(&format!("Renamed to {}\n", dest.display()));
+                self.status = format!("Renamed {}", dest.display());
+            }
+            Err(err) => self.log_err(&err),
+        }
+    }
+
+    fn delete_selected(&mut self, path: &Path) {
+        match project::delete_file(path) {
+            Ok(()) => {
+                self.drop_open_path(path);
+                if self.explorer_sel.as_deref() == Some(path) {
+                    self.explorer_sel = None;
+                }
+                self.refresh_tree();
+                self.load_active_into_editor();
+                self.log(&format!("Deleted {}\n", path.display()));
+                self.status = format!("Deleted {}", path.display());
+            }
+            Err(err) => self.log_err(&err),
+        }
+    }
+
+    fn create_file(&mut self, name: &str) {
+        let name = match project::validate_entry_name(name) {
+            Ok(name) => name,
+            Err(err) => {
+                self.log_err(&err);
+                return;
+            }
+        };
+        let Some(dir) = self.destination_dir() else {
+            self.log_err("Create or open a project first.");
             return;
         };
-        let path = root.join(name);
+        let Some(language) = self.project.as_ref().map(|project| project.language) else {
+            self.log_err("Create or open a project first.");
+            return;
+        };
+        let path = dir.join(&name);
         if path.exists() {
             self.log_err(&format!("Already exists: {}", path.display()));
             return;
         }
-        let stem = {
-            let lower = name.to_ascii_lowercase();
-            lower
-                .trim_end_matches(".sv")
-                .trim_end_matches(".vh")
-                .trim_end_matches(".v")
-                .to_string()
-        };
-        let body = if templates::is_testbench_filename(name) {
-            templates::testbench_template(&stem)
-        } else if is_verilog_name(name) {
-            templates::module_template(&stem)
-        } else {
-            String::new()
-        };
-        if let Err(e) = std::fs::write(&path, body) {
-            self.log_err(&e.to_string());
+        let body = templates::body_for(&name, language);
+        if let Err(err) = std::fs::write(&path, body) {
+            self.log_err(&err.to_string());
             return;
         }
         self.refresh_tree();
@@ -967,20 +1174,24 @@ impl VerilogIde {
     }
 
     fn create_folder(&mut self, name: &str) {
-        let name = name.trim();
-        if name.is_empty() {
-            return;
-        }
-        let Some(root) = self.project_root() else {
-            self.log_err("Open a folder first (File → Open Folder).");
+        let name = match project::validate_entry_name(name) {
+            Ok(name) => name,
+            Err(err) => {
+                self.log_err(&err);
+                return;
+            }
+        };
+        let Some(dir) = self.destination_dir() else {
+            self.log_err("Create or open a project first.");
             return;
         };
-        let path = root.join(name);
-        if let Err(e) = std::fs::create_dir_all(&path) {
-            self.log_err(&e.to_string());
+        let path = dir.join(name);
+        if let Err(err) = std::fs::create_dir_all(&path) {
+            self.log_err(&err.to_string());
             return;
         }
         self.expanded.insert(path.clone());
+        self.explorer_sel = Some(path.clone());
         self.refresh_tree();
         self.log(&format!("Created folder {}\n", path.display()));
     }
@@ -1084,29 +1295,63 @@ impl VerilogIde {
     fn view_menu_dropdown(&self, menu: TopMenu) -> Element<'_, Message> {
         match menu {
             TopMenu::File => menu_dropdown(column![
-                menu_item("Open Folder…", Message::OpenProject),
+                menu_item(
+                    "New Verilog Project…",
+                    Message::ShowNewProject(ProjectLanguage::Verilog),
+                ),
+                menu_item(
+                    "New VHDL Project…",
+                    Message::ShowNewProject(ProjectLanguage::Vhdl),
+                ),
+                menu_item("Open Existing…", Message::OpenProject),
                 menu_item("Open File…", Message::OpenFilePicker),
                 menu_item("New File…", Message::ShowNewFile),
+                menu_item("Rename File…", Message::ShowRename),
+                menu_item("Delete File…", Message::ShowDelete),
                 menu_item("New Folder…", Message::ShowNewFolder),
                 menu_item("Save", Message::Save),
                 menu_item("Save All", Message::SaveAll),
-                menu_item("Close Folder", Message::CloseProject),
-                menu_item("Open Half Adder", Message::CreateSample),
+                menu_item("Close Project", Message::CloseProject),
+            ]),
+            TopMenu::Samples => menu_dropdown(column![
+                menu_item(
+                    "Verilog half adder",
+                    Message::OpenSample(ProjectLanguage::Verilog),
+                ),
+                menu_item(
+                    "VHDL half adder",
+                    Message::OpenSample(ProjectLanguage::Vhdl),
+                ),
             ]),
             TopMenu::Edit => menu_dropdown(column![
                 menu_item("Find…", Message::ShowFind),
                 menu_item("Refresh Explorer", Message::RefreshExplorer),
             ]),
-            TopMenu::View => menu_dropdown(column![
-                menu_item_owned(
-                    view_mode_label("Text Editor", self.view_mode == ViewMode::TextEditor),
-                    Message::SetViewMode(ViewMode::TextEditor),
-                ),
-                menu_item_owned(
-                    view_mode_label("Waveform", self.view_mode == ViewMode::Waveform),
-                    Message::SetViewMode(ViewMode::Waveform),
-                ),
-            ]),
+            TopMenu::View => {
+                let dump = self
+                    .active_path()
+                    .cloned()
+                    .filter(|path| is_wave_path(path));
+                let view = dump
+                    .as_ref()
+                    .and_then(|path| self.file_view(path));
+                menu_dropdown(match dump {
+                    Some(path) => column![
+                        menu_item_owned(
+                            view_mode_label("Text", view == Some(FileView::Text)),
+                            Message::OpenAs(path.clone(), ViewMode::TextEditor),
+                        ),
+                        menu_item_owned(
+                            view_mode_label("Wave", view == Some(FileView::Waveform)),
+                            Message::OpenAs(path, ViewMode::Waveform),
+                        ),
+                    ],
+                    None => column![
+                        menu_item("Text", Message::DumpModeHint),
+                        menu_item("Wave", Message::DumpModeHint),
+                    ],
+                })
+            }
             TopMenu::Run => menu_dropdown(column![
                 menu_item("Run Simulation (F5)", Message::RunSim),
                 menu_item("Anonymize VCD", Message::AnonymizeVcd),
@@ -1120,6 +1365,7 @@ impl VerilogIde {
 
     fn view_menu_bar(&self) -> Element<'_, Message> {
         let file_active = self.menu_open == Some(TopMenu::File);
+        let samples_active = self.menu_open == Some(TopMenu::Samples);
         let edit_active = self.menu_open == Some(TopMenu::Edit);
         let view_active = self.menu_open == Some(TopMenu::View);
         let run_active = self.menu_open == Some(TopMenu::Run);
@@ -1128,6 +1374,11 @@ impl VerilogIde {
         container(
             row![
                 menu_label("File", file_active, Message::MenuToggle(TopMenu::File)),
+                menu_label(
+                    "Samples",
+                    samples_active,
+                    Message::MenuToggle(TopMenu::Samples),
+                ),
                 menu_label("Edit", edit_active, Message::MenuToggle(TopMenu::Edit)),
                 menu_label("View", view_active, Message::MenuToggle(TopMenu::View)),
                 menu_label("Run", run_active, Message::MenuToggle(TopMenu::Run)),
@@ -1144,7 +1395,7 @@ impl VerilogIde {
                     !self.sim_running && !self.tool_running,
                     Message::VcdToSaif,
                 ),
-                text("Verilog IDE").size(13).color(ACCENT),
+                text(self.window_brand()).size(13).color(ACCENT),
             ]
             .height(Fill)
             .spacing(2)
@@ -1192,6 +1443,8 @@ impl VerilogIde {
             horizontal_space(),
             sidebar_icon(Kind::NewFile, "New file", Message::ShowNewFile),
             sidebar_icon(Kind::NewFolder, "New folder", Message::ShowNewFolder),
+            sidebar_icon(Kind::Rename, "Rename file", Message::ShowRename),
+            sidebar_icon(Kind::Delete, "Delete file", Message::ShowDelete),
             sidebar_icon(Kind::Refresh, "Refresh", Message::RefreshExplorer),
         ]
         .align_y(Alignment::Center)
@@ -1201,6 +1454,7 @@ impl VerilogIde {
             row![
                 icons::mark(Kind::FolderOpen).size(14.0),
                 text(p.name.as_str()).size(13).color(FG_TEXT),
+                text(p.language.label()).size(11).color(ACCENT),
             ]
             .spacing(6)
             .padding([4, 10])
@@ -1219,17 +1473,7 @@ impl VerilogIde {
             .height(Fill)
             .into()
         } else {
-            scrollable(
-                column![
-                    text("No folder opened").size(13).color(FG_MUTED),
-                    Space::new(Length::Fill, Length::Fixed(8.0)),
-                    sidebar_link("Open half adder", Message::CreateSample),
-                    sidebar_link("Open folder…", Message::OpenProject),
-                    sidebar_link("Open file…", Message::OpenFilePicker),
-                ]
-                .padding(12)
-                .spacing(6),
-            )
+            scrollable(self.view_project_links().padding(12).spacing(6))
             .height(Fill)
             .into()
         };
@@ -1252,7 +1496,8 @@ impl VerilogIde {
     ) -> Vec<Element<'static, Message>> {
         let mut items = Vec::new();
         let indent = depth as f32 * 16.0;
-        let is_active = self.active_path().is_some_and(|p| p == &node.path);
+        let is_active = self.explorer_sel.as_ref() == Some(&node.path)
+            || self.active_path().is_some_and(|p| p == &node.path);
 
         if depth > 0 {
             if node.is_dir {
@@ -1264,14 +1509,6 @@ impl VerilogIde {
                     node.name.clone(),
                     is_active,
                     Message::ToggleDir(node.path.clone()),
-                ));
-            } else if is_vcd_path(&node.path) {
-                items.push(vcd_tree_row(
-                    indent,
-                    node.name.clone(),
-                    node.path.clone(),
-                    is_active,
-                    self.file_view(&node.path),
                 ));
             } else {
                 items.push(tree_row(
@@ -1320,6 +1557,7 @@ impl VerilogIde {
                 .into();
         }
 
+        let mode_switch = self.view_dump_switch();
         let tabs = scrollable(
             row(
                 self.open.iter().enumerate().map(|(i, f)| {
@@ -1354,18 +1592,108 @@ impl VerilogIde {
         )
         .direction(iced::widget::scrollable::Direction::Horizontal(
             Default::default(),
-        ));
+        ))
+        .width(Fill);
 
-        container(tabs)
-            .width(Fill)
-            .height(Length::Fixed(TAB_HEIGHT))
-            .style(|_| panel_style(BG_TABS))
-            .into()
+        container(
+            row![tabs, mode_switch]
+                .width(Fill)
+                .align_y(Alignment::Center)
+                .height(Fill),
+        )
+        .width(Fill)
+        .height(Length::Fixed(TAB_HEIGHT))
+        .style(|_| panel_style(BG_TABS))
+        .into()
+    }
+
+    fn view_dump_switch(&self) -> Element<'_, Message> {
+        let Some(path) = self.active_path().cloned().filter(|path| is_wave_path(path)) else {
+            return Space::new(Length::Shrink, Length::Shrink).into();
+        };
+        let view = self.file_view(&path);
+        row![
+            text("View").size(12).color(FG_MUTED),
+            vcd_switch(
+                "Text",
+                view == Some(FileView::Text),
+                Message::OpenAs(path.clone(), ViewMode::TextEditor),
+            ),
+            vcd_switch(
+                "Wave",
+                view == Some(FileView::Waveform),
+                Message::OpenAs(path, ViewMode::Waveform),
+            ),
+        ]
+        .spacing(6)
+        .padding([0, 10])
+        .align_y(Alignment::Center)
+        .into()
+    }
+
+    fn view_project_links(&self) -> Column<'_, Message> {
+        column![
+            text("No project open").size(13).color(FG_MUTED),
+            sidebar_link(
+                "New Verilog project",
+                Message::ShowNewProject(ProjectLanguage::Verilog),
+            ),
+            sidebar_link(
+                "New VHDL project",
+                Message::ShowNewProject(ProjectLanguage::Vhdl),
+            ),
+            sidebar_link("Open existing…", Message::OpenProject),
+        ]
+        .spacing(6)
+    }
+
+    fn window_brand(&self) -> String {
+        match self.project.as_ref() {
+            Some(project) => format!("{} · {}", project.language.label(), project.language.simulator()),
+            None => "Verilog · VHDL".into(),
+        }
+    }
+
+    fn view_home(&self) -> Element<'_, Message> {
+        container(
+            column![
+                text("Verilog IDE").size(36).color(FG_TEXT),
+                text("Create a new project or open an existing folder.")
+                    .size(15)
+                    .color(FG_MUTED),
+                Space::new(Length::Shrink, Length::Fixed(8.0)),
+                row![
+                    welcome_button(
+                        "New Verilog",
+                        Message::ShowNewProject(ProjectLanguage::Verilog),
+                        true,
+                    ),
+                    welcome_button(
+                        "New VHDL",
+                        Message::ShowNewProject(ProjectLanguage::Vhdl),
+                        true,
+                    ),
+                    welcome_button("Open existing", Message::OpenProject, false),
+                ]
+                .spacing(10),
+            ]
+            .align_x(Alignment::Center)
+            .spacing(8)
+            .width(Length::Fixed(560.0)),
+        )
+        .width(Fill)
+        .height(Fill)
+        .center_x(Fill)
+        .center_y(Fill)
+        .into()
     }
 
     fn view_editor_body(&self) -> Element<'_, Message> {
+        if self.project.is_none() {
+            return self.view_home();
+        }
         if self.open.is_empty() {
-            return view_welcome();
+            return view_empty_project();
         }
 
         if self.active_is_waveform() {
@@ -1400,9 +1728,11 @@ impl VerilogIde {
                 VerilogHighlightSettings {
                     enabled: self
                         .active_path()
-                        .map(|path| verilog_highlighter::syntax_enabled_for_path(path.as_path()))
-                        .unwrap_or(true),
+                        .is_some_and(|path| verilog_highlighter::syntax_enabled_for_path(path.as_path())),
                     rust: false,
+                    vhdl: self
+                        .active_path()
+                        .is_some_and(|path| verilog_highlighter::vhdl_syntax_for_path(path.as_path())),
                 },
                 verilog_highlighter::format_highlight,
             )
@@ -1435,51 +1765,11 @@ impl VerilogIde {
         .height(Fill)
         .style(|_| panel_style(BG_EDITOR));
 
-        if let Some(path) = self.active_path().filter(|path| is_vcd_path(path)).cloned() {
-            column![self.view_vcd_mode_bar(&path), editor_view]
-                .spacing(0)
-                .width(Fill)
-                .height(Fill)
-                .into()
-        } else {
-            editor_view.into()
-        }
+        editor_view.into()
     }
 
     fn file_view(&self, path: &std::path::Path) -> Option<FileView> {
         self.open.iter().find(|file| file.path == path).map(|file| file.view)
-    }
-
-    fn view_vcd_mode_bar(&self, path: &std::path::Path) -> Element<'static, Message> {
-        let view = self.file_view(path);
-        let label = path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("waveform")
-            .to_string();
-        let path_buf = path.to_path_buf();
-        container(
-            row![
-                vcd_switch(
-                    "Text",
-                    view == Some(FileView::Text),
-                    Message::OpenAs(path_buf.clone(), ViewMode::TextEditor),
-                ),
-                vcd_switch(
-                    "Wave",
-                    view == Some(FileView::Waveform),
-                    Message::OpenAs(path_buf, ViewMode::Waveform),
-                ),
-                horizontal_space(),
-                text(label).size(12).color(FG_MUTED),
-            ]
-            .spacing(6)
-            .padding([6, 8])
-            .align_y(Alignment::Center),
-        )
-        .width(Fill)
-        .style(|_| panel_style(BG_TABS))
-        .into()
     }
 
     fn view_waveform_body(&self) -> Element<'_, Message> {
@@ -1502,26 +1792,11 @@ impl VerilogIde {
             .and_then(|name| name.to_str())
             .unwrap_or("waveform")
             .to_string();
-        let view = self.file_view(path);
-        let mut tools = iced::widget::Row::<'_, Message>::new()
-            .spacing(6)
-            .padding([6, 8])
-            .align_y(Alignment::Center);
-        if vcd_only {
-            tools = tools
-                .push(vcd_switch(
-                    "Text",
-                    view == Some(FileView::Text),
-                    Message::OpenAs(path.clone(), ViewMode::TextEditor),
-                ))
-                .push(vcd_switch(
-                    "Wave",
-                    view == Some(FileView::Waveform),
-                    Message::OpenAs(path.clone(), ViewMode::Waveform),
-                ));
-        }
         let tool_bar = container(
-            tools
+            iced::widget::Row::<'_, Message>::new()
+                .spacing(6)
+                .padding([6, 8])
+                .align_y(Alignment::Center)
                 .push(vcd_tool_button(
                     "Anon VCD",
                     tools_enabled && vcd_only,
@@ -1568,7 +1843,7 @@ impl VerilogIde {
                     Space::new(Length::Shrink, Length::Fixed(8.0)),
                     welcome_button(
                         "Open as text",
-                        Message::SetViewMode(ViewMode::TextEditor),
+                        Message::OpenAs(path.to_path_buf(), ViewMode::TextEditor),
                         true,
                     ),
                 ]
@@ -1656,8 +1931,8 @@ impl VerilogIde {
         let branch = self
             .project
             .as_ref()
-            .map(|p| p.name.clone())
-            .unwrap_or_else(|| "No Folder".into());
+            .map(|p| format!("{} · {}", p.name, p.language.label()))
+            .unwrap_or_else(|| "No project".into());
 
         let detail = if let Some(i) = self.active {
             if let Some(f) = self.open.get(i) {
@@ -1694,7 +1969,10 @@ impl VerilogIde {
         } else if self.tool_running {
             "Working"
         } else {
-            "xezim"
+            self.project
+                .as_ref()
+                .map(|project| project.language.simulator())
+                .unwrap_or("Ready")
         };
 
         container(
@@ -1719,31 +1997,69 @@ impl VerilogIde {
             return Space::new(Length::Shrink, Length::Fixed(0.0)).into();
         };
 
-        let (title, input, show_input) = match dialog {
-            Dialog::NewFile { name } => ("New File", name.clone(), true),
-            Dialog::NewFolder { name } => ("New Folder", name.clone(), true),
-            Dialog::Find { query } => ("Find", query.clone(), true),
-            Dialog::About => ("About", String::new(), false),
-        };
-
-        let body: Element<'_, Message> = if show_input {
-            column![
-                text(title).size(14).color(FG_TEXT),
-                text_input("Name…", &input).on_input(Message::DialogInput),
+        let body: Element<'_, Message> = match dialog {
+            Dialog::NewFile { name } => dialog_prompt("New file", name, "Create"),
+            Dialog::NewFolder { name } => dialog_prompt("New folder", name, "Create"),
+            Dialog::RenameFile { name, .. } => dialog_prompt("Rename file", name, "Rename"),
+            Dialog::Find { query } => dialog_prompt("Find", query, "Find"),
+            Dialog::NewProject { language, name } => {
+                let folder = project::sanitize_project_name(name)
+                    .unwrap_or_else(|_| name.clone());
+                let dest = project::default_projects_dir().join(folder);
+                column![
+                    text(format!("New {} project", language.label()))
+                        .size(14)
+                        .color(FG_TEXT),
+                    text_input("Project name…", name).on_input(Message::DialogInput),
+                    text(format!("Folder: {}", dest.display()))
+                        .size(12)
+                        .color(FG_MUTED),
+                    row![
+                        button("Create").on_press(Message::DialogConfirm),
+                        button("Cancel").on_press(Message::DialogCancel),
+                    ]
+                    .spacing(8),
+                ]
+                .spacing(8)
+                .into()
+            }
+            Dialog::DeleteFile { path } => {
+                let name = path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or("this file");
+                column![
+                    text("Delete file").size(14).color(FG_TEXT),
+                    text(format!("{name} will be removed from disk."))
+                        .size(13)
+                        .color(FG_MUTED),
+                    row![
+                        button("Delete").on_press(Message::DialogConfirm),
+                        button("Cancel").on_press(Message::DialogCancel),
+                    ]
+                    .spacing(8),
+                ]
+                .spacing(8)
+                .into()
+            }
+            Dialog::ChooseLanguage { root } => column![
+                text("Choose a project type").size(14).color(FG_TEXT),
+                text(root.display().to_string()).size(12).color(FG_MUTED),
                 row![
-                    button("OK").on_press(Message::DialogConfirm),
+                    button("Verilog")
+                        .on_press(Message::LanguageChosen(ProjectLanguage::Verilog)),
+                    button("VHDL").on_press(Message::LanguageChosen(ProjectLanguage::Vhdl)),
                     button("Cancel").on_press(Message::DialogCancel),
                 ]
                 .spacing(8),
             ]
             .spacing(8)
-            .into()
-        } else {
-            column![
+            .into(),
+            Dialog::About => column![
                 text("Verilog IDE").size(18).color(FG_TEXT),
-                text("A desktop editor for Verilog and Verilog testbenches.").color(FG_MUTED),
-                text("Run uses xezim and writes a .vcd. The half-adder sample is half_adder.v and half_adder_tb.v.").color(FG_TEXT),
-                text("Anon VCD flattens a dump. To SAIF writes switching activity. View → Waveform draws traces with wellen.").color(FG_TEXT),
+                text("A desktop editor for Verilog and VHDL.").color(FG_MUTED),
+                text("Verilog projects simulate with xezim and write a .vcd. VHDL projects simulate with yavs and write an .fst.").color(FG_TEXT),
+                text("Text and Wave for a dump sit on the right of the tab bar. Anon VCD and To SAIF stay on the waveform toolbar.").color(FG_TEXT),
                 button("Close").on_press(Message::DialogCancel).style(|_, status| {
                     let hovered = matches!(
                         status,
@@ -1753,7 +2069,7 @@ impl VerilogIde {
                 }),
             ]
             .spacing(6)
-            .into()
+            .into(),
         };
 
         container(body)
@@ -1764,8 +2080,18 @@ impl VerilogIde {
     }
 }
 
-fn is_verilog_name(name: &str) -> bool {
-    name.ends_with(".v") || name.ends_with(".sv")
+fn dialog_prompt(title: &'static str, value: &str, confirm: &'static str) -> Element<'static, Message> {
+    column![
+        text(title).size(14).color(FG_TEXT),
+        text_input("Name…", value).on_input(Message::DialogInput),
+        row![
+            button(confirm).on_press(Message::DialogConfirm),
+            button("Cancel").on_press(Message::DialogCancel),
+        ]
+        .spacing(8),
+    ]
+    .spacing(8)
+    .into()
 }
 
 fn panel_style(bg: Color) -> iced::widget::container::Style {
@@ -1891,10 +2217,11 @@ fn view_mode_label(name: &str, selected: bool) -> String {
 fn menu_dropdown_left(menu: TopMenu) -> f32 {
     match menu {
         TopMenu::File => 8.0,
-        TopMenu::Edit => 52.0,
-        TopMenu::View => 96.0,
-        TopMenu::Run => 148.0,
-        TopMenu::Help => 192.0,
+        TopMenu::Samples => 56.0,
+        TopMenu::Edit => 140.0,
+        TopMenu::View => 184.0,
+        TopMenu::Run => 236.0,
+        TopMenu::Help => 280.0,
     }
 }
 
@@ -1987,7 +2314,7 @@ fn vcd_tool_button(label: &'static str, enabled: bool, msg: Message) -> Element<
 
 fn menu_dropdown(items: Column<'_, Message>) -> Element<'_, Message> {
     container(items.padding(6).spacing(2))
-        .width(Length::Fixed(240.0))
+        .width(Length::Fixed(280.0))
         .style(|_| iced::widget::container::Style {
             background: Some(iced::Background::Color(BG_ELEVATED)),
             border: Border {
@@ -2046,8 +2373,8 @@ fn sidebar_icon(kind: Kind, tip: &'static str, msg: Message) -> Element<'static,
     .into()
 }
 
-fn sidebar_link(label: &str, msg: Message) -> Element<'_, Message> {
-    button(text(label).size(13))
+fn sidebar_link(label: impl Into<String>, msg: Message) -> Element<'static, Message> {
+    button(text(label.into()).size(13))
         .on_press(msg)
         .padding([4, 0])
         .style(|_, status| {
@@ -2077,6 +2404,8 @@ fn file_kind(path: &Path) -> Kind {
         Kind::Testbench
     } else if lower.ends_with(".vh") || lower.ends_with(".svh") {
         Kind::Header
+    } else if lower.ends_with(".vhd") || lower.ends_with(".vhdl") {
+        Kind::Vhdl
     } else if lower.ends_with(".v") || lower.ends_with(".sv") || lower.ends_with(".vl") {
         Kind::Verilog
     } else if lower.ends_with(".txt") || lower.ends_with(".md") {
@@ -2156,51 +2485,6 @@ fn tree_row(
     .into()
 }
 
-fn vcd_tree_row(
-    indent: f32,
-    label: String,
-    path: PathBuf,
-    active: bool,
-    view: Option<FileView>,
-) -> Element<'static, Message> {
-    column![
-        row![
-            Space::new(Length::Fixed(indent), Length::Shrink),
-            button(tree_label(Kind::Vcd, label, None))
-                .on_press(Message::OpenFile(path.clone()))
-                .width(Fill)
-                .padding([3, 6])
-                .style(move |_, status| tree_button_style(active, status)),
-        ]
-        .width(Fill)
-        .align_y(Alignment::Center),
-        row![
-            Space::new(Length::Fixed(indent + 36.0), Length::Shrink),
-            vcd_switch(
-                "Text",
-                view == Some(FileView::Text),
-                Message::OpenAs(path.clone(), ViewMode::TextEditor),
-            ),
-            vcd_switch(
-                "Wave",
-                view == Some(FileView::Waveform),
-                Message::OpenAs(path, ViewMode::Waveform),
-            ),
-        ]
-        .spacing(4)
-        .padding(Padding {
-            top: 0.0,
-            right: 8.0,
-            bottom: 3.0,
-            left: 0.0,
-        })
-        .align_y(Alignment::Center),
-    ]
-    .spacing(0)
-    .width(Fill)
-    .into()
-}
-
 fn tab_button(title: String, selected: bool, msg: Message) -> Element<'static, Message> {
     button(text(title).size(12))
         .on_press(msg)
@@ -2222,73 +2506,22 @@ fn tab_button(title: String, selected: bool, msg: Message) -> Element<'static, M
         .into()
 }
 
-fn view_welcome() -> Element<'static, Message> {
-    let mark = container(icons::mark(Kind::Logo).size(42.0))
-        .width(Length::Fixed(76.0))
-        .height(Length::Fixed(76.0))
-        .align_x(Alignment::Center)
-        .align_y(Alignment::Center)
-        .style(|_| iced::widget::container::Style {
-            background: Some(iced::Background::Color(Color::from_rgb(0.90, 0.96, 0.96))),
-            border: Border {
-                color: ACCENT,
-                width: 2.0,
-                radius: 20.0.into(),
-            },
-            ..Default::default()
-        });
-
+fn view_empty_project() -> Element<'static, Message> {
     container(
         column![
-            mark,
-            Space::new(Length::Shrink, Length::Fixed(4.0)),
-            text("Verilog IDE").size(36).color(FG_TEXT),
-            text("Edit a module, run the testbench, and read the waveform.")
-                .size(15)
+            text("This project has no open files.").size(18).color(FG_TEXT),
+            text("Create a file from the sidebar, or click a file in the explorer.")
+                .size(14)
                 .color(FG_MUTED),
-            Space::new(Length::Shrink, Length::Fixed(6.0)),
-            row![
-                welcome_button("Open half adder", Message::CreateSample, true),
-                welcome_button("Open folder", Message::OpenProject, false),
-                welcome_button("Open file", Message::OpenFilePicker, false),
-            ]
-            .spacing(10),
-            Space::new(Length::Shrink, Length::Fixed(18.0)),
-            welcome_step("1", "The half adder is half_adder.v plus half_adder_tb.v."),
-            welcome_step("2", "Press Run or F5. xezim writes half_adder.vcd."),
-            welcome_step("3", "Scroll to zoom the traces, drag to pan, click to place a cursor."),
+            welcome_button("New file", Message::ShowNewFile, true),
         ]
         .align_x(Alignment::Center)
-        .spacing(8)
-        .width(Length::Fixed(560.0)),
+        .spacing(8),
     )
     .width(Fill)
     .height(Fill)
     .center_x(Fill)
     .center_y(Fill)
-    .into()
-}
-
-fn welcome_step(n: &'static str, body: &'static str) -> Element<'static, Message> {
-    row![
-        container(text(n).size(12).color(Color::WHITE))
-            .width(Length::Fixed(22.0))
-            .height(Length::Fixed(22.0))
-            .align_x(Alignment::Center)
-            .align_y(Alignment::Center)
-            .style(|_| iced::widget::container::Style {
-                background: Some(iced::Background::Color(ACCENT)),
-                border: Border {
-                    radius: 11.0.into(),
-                    ..Default::default()
-                },
-                ..Default::default()
-            }),
-        text(body).size(13).color(FG_TEXT),
-    ]
-    .spacing(10)
-    .align_y(Alignment::Center)
-    .width(Length::Fill)
     .into()
 }
 
@@ -2372,6 +2605,7 @@ async fn pick_file(title: &str) -> Result<Option<PathBuf>, DialogError> {
     let picked = rfd::AsyncFileDialog::new()
         .set_title(&title)
         .add_filter("Verilog", &["v", "sv", "vh", "svh"])
+        .add_filter("VHDL", &["vhd", "vhdl"])
         .add_filter("Text", &["txt", "md"])
         .add_filter("Waveform", &["vcd", "fst", "ghw"])
         .pick_file()
@@ -2418,6 +2652,8 @@ fn pick_file_zenity(title: &str) -> Result<Option<PathBuf>, DialogError> {
             title,
             "--file-filter",
             "Verilog | *.v *.sv *.vh *.svh",
+            "--file-filter",
+            "VHDL | *.vhd *.vhdl",
             "--file-filter",
             "Waveform | *.vcd *.fst *.ghw",
             "--file-filter",

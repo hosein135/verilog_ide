@@ -19,6 +19,8 @@ const AMBER: Color = Color::from_rgb(0.78, 0.42, 0.08);
 const INDIGO: Color = Color::from_rgb(0.36, 0.34, 0.68);
 const GREEN: Color = Color::from_rgb(0.10, 0.52, 0.34);
 const SLATE: Color = Color::from_rgb(0.42, 0.48, 0.56);
+const VIOLET: Color = Color::from_rgb(0.42, 0.28, 0.62);
+const ROSE: Color = Color::from_rgb(0.70, 0.22, 0.24);
 const CHEVRON: Color = Color::from_rgb(0.38, 0.44, 0.50);
 const WHITE: Color = Color::from_rgb(1.0, 1.0, 1.0);
 
@@ -29,6 +31,7 @@ pub enum Kind {
     Folder,
     FolderOpen,
     Verilog,
+    Vhdl,
     Testbench,
     Header,
     Vcd,
@@ -38,6 +41,8 @@ pub enum Kind {
     File,
     NewFile,
     NewFolder,
+    Rename,
+    Delete,
     Refresh,
     Logo,
 }
@@ -114,6 +119,10 @@ fn draw_kind(renderer: &mut impl iced::advanced::Renderer, kind: Kind, bounds: R
             document(renderer, bounds, Some(TEAL));
             lines(renderer, bounds);
         }
+        Kind::Vhdl => {
+            document(renderer, bounds, Some(VIOLET));
+            lines(renderer, bounds);
+        }
         Kind::Testbench => {
             document(renderer, bounds, Some(AMBER));
             pulse(renderer, bounds, AMBER);
@@ -141,6 +150,11 @@ fn draw_kind(renderer: &mut impl iced::advanced::Renderer, kind: Kind, bounds: R
             folder(renderer, bounds, false);
             plus_badge(renderer, bounds, TEAL);
         }
+        Kind::Rename => {
+            document(renderer, bounds, Some(TEAL));
+            fill(renderer, cell(bounds, 6.2, 8.2, 6.2, 1.5), TEAL, 0.4, bounds);
+        }
+        Kind::Delete => trash(renderer, bounds),
         Kind::Refresh => refresh(renderer, bounds),
         Kind::Logo => wave_tile(renderer, bounds, TEAL),
     }
@@ -204,6 +218,14 @@ fn wave_tile(renderer: &mut impl iced::advanced::Renderer, bounds: Rectangle, bg
     fill(renderer, cell(bounds, 6.2, 9.2, 3.2, 1.7), WHITE, 0.4, bounds);
     fill(renderer, cell(bounds, 9.4, 4.3, 1.7, 6.6), WHITE, 0.4, bounds);
     fill(renderer, cell(bounds, 9.4, 4.3, 3.6, 1.7), WHITE, 0.4, bounds);
+}
+
+fn trash(renderer: &mut impl iced::advanced::Renderer, bounds: Rectangle) {
+    fill(renderer, cell(bounds, 4.2, 3.2, 7.6, 1.6), ROSE, 0.4, bounds);
+    fill(renderer, cell(bounds, 6.6, 1.8, 2.8, 1.6), ROSE, 0.4, bounds);
+    fill(renderer, cell(bounds, 4.6, 5.2, 6.8, 9.0), ROSE, 1.2, bounds);
+    fill(renderer, cell(bounds, 6.4, 6.6, 1.2, 5.6), WHITE, 0.3, bounds);
+    fill(renderer, cell(bounds, 8.4, 6.6, 1.2, 5.6), WHITE, 0.3, bounds);
 }
 
 fn plus_badge(renderer: &mut impl iced::advanced::Renderer, bounds: Rectangle, color: Color) {
