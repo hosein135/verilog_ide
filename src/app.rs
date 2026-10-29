@@ -582,7 +582,7 @@ impl VerilogIde {
                     self.status = "Simulation finished (no waveform)".into();
                     let hint = match self.project.as_ref().map(|project| project.language) {
                         Some(ProjectLanguage::Vhdl) => {
-                            "Simulation finished but no .fst was produced."
+                            "Simulation finished but no waveform was produced."
                         }
                         _ => {
                             "Simulation finished but no .vcd was produced. Add $dumpfile / $dumpvars to the testbench."
@@ -2061,7 +2061,7 @@ impl VerilogIde {
             Dialog::About => column![
                 text("Verilog IDE").size(18).color(FG_TEXT),
                 text("A desktop editor for Verilog and VHDL.").color(FG_MUTED),
-                text("Verilog projects simulate with xezim and write a .vcd. VHDL projects simulate with yavs and write an .fst.").color(FG_TEXT),
+                text("Verilog projects simulate with xezim and write a .vcd. VHDL projects simulate with yavs, write an .fst, and convert it to a .vcd with wellen.").color(FG_TEXT),
                 text("Text and Wave for a dump sit on the right of the tab bar. Anon VCD and To SAIF stay on the waveform toolbar.").color(FG_TEXT),
                 button("Close").on_press(Message::DialogCancel).style(|_, status| {
                     let hovered = matches!(

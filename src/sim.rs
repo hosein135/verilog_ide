@@ -22,7 +22,8 @@ pub struct SimJob {
 pub struct SimResult {
     pub ok: bool,
     pub log: String,
-    /// Waveform written by the simulator (`.vcd` from xezim, `.fst` from yavs).
+    /// Waveform opened after the run (`.vcd` from xezim, or the wellen VCD
+    /// converted from yavs's `.fst`).
     pub wave: Option<PathBuf>,
 }
 

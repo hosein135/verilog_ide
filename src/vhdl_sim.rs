@@ -137,9 +137,22 @@ pub fn run_job(job: &VhdlJob) -> SimResult {
     log.push_str(&format!("$ {}\n", command_line(&job.yavs, &run_args)));
     let ran = run_yavs(&job.yavs, &run_args, &job.root);
     log.push_str(&ran.output);
-    let wave = wave_file(&job.wave);
-    match &wave {
-        Some(path) => log.push_str(&format!("FST written: {}\n", path.display())),
+    let fst = wave_file(&job.wave);
+    let mut wave = fst.clone();
+    match &fst {
+        Some(path) => {
+            log.push_str(&format!("FST written: {}\n", path.display()));
+            let vcd_path = path.with_extension("vcd");
+            match crate::fst_to_vcd::write_vcd(path, &vcd_path) {
+                Ok(()) => {
+                    log.push_str(&format!("VCD written: {}\n", vcd_path.display()));
+                    wave = Some(vcd_path);
+                }
+                Err(err) => {
+                    log.push_str(&format!("Could not convert FST to VCD: {err}\n"));
+                }
+            }
+        }
         None => log.push_str("Simulation finished but no .fst was found.\n"),
     }
     if !ran.ok {
@@ -381,10 +394,24 @@ mod tests {
         let job = prepare_job(&root, None, &[]).expect("prepare half adder vhdl");
         let result = run_job(&job);
         assert!(result.ok, "{}", result.log);
-        let wave = result.wave.expect("fst path");
+        let vcd = result.wave.expect("vcd path");
+        assert_eq!(vcd.extension().and_then(|ext| ext.to_str()), Some("vcd"));
         assert!(
-            std::fs::metadata(&wave).map(|m| m.len() > 16).unwrap_or(false),
-            "fst missing:\n{}",
+            std::fs::metadata(&vcd).map(|m| m.len() > 16).unwrap_or(false),
+            "vcd missing:\n{}",
+            result.log
+        );
+        let vcd_text = std::fs::read_to_string(&vcd).unwrap_or_default();
+        assert!(
+            vcd_text.contains("$enddefinitions"),
+            "vcd text:\n{vcd_text}\nlog:\n{}",
+            result.log
+        );
+        let fst = vcd.with_extension("fst");
+        assert!(
+            fst.is_file(),
+            "fst missing next to {}:\n{}",
+            vcd.display(),
             result.log
         );
         assert!(
@@ -392,7 +419,8 @@ mod tests {
             "simulation log:\n{}",
             result.log
         );
-        let _ = std::fs::remove_file(wave);
+        let _ = std::fs::remove_file(&vcd);
+        let _ = std::fs::remove_file(fst);
         let _ = std::fs::remove_dir_all(root.join(".yavs"));
     }
 }

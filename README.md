@@ -10,7 +10,7 @@ Desktop IDE for **Verilog** and **VHDL**, written in Rust with [iced](https://gi
 - Multi-tab editor with line numbers and syntax highlighting for Verilog and VHDL
 - New design / testbench templates for the project's language
 - **Samples** menu: Verilog half adder (`samples/half_adder`) and VHDL half adder (`samples/half_adder_vhdl`)
-- **Run** (F5): Verilog uses [xezim](https://github.com/aionhw/xezim) and writes a `.vcd`. VHDL uses [yavs](https://github.com/ru551n/yavs) and writes an `.fst`
+- **Run** (F5): Verilog uses [xezim](https://github.com/aionhw/xezim) and writes a `.vcd`. VHDL uses [yavs](https://github.com/ru551n/yavs) and writes an `.fst`, then [wellen](https://github.com/ekiwi/wellen) converts that FST into a `.vcd`
 - **Text / Wave** for the active `.vcd`, `.fst`, or `.ghw` sits on the right of the tab bar. Traces are drawn with [wellen](https://github.com/ekiwi/wellen) from [Surfer](https://gitlab.com/surfer-project/surfer)
 - **Anon VCD**: flatten and rename the open `.vcd` with [vcd-anon](https://gitlab.com/surfer-project/vcd-anon). Writes `name.anon.vcd` and `name.anon.mapping.txt`
 - **To SAIF**: convert a `.vcd` / `.fst` / `.ghw` dump to a switching-activity `.saif` with [wave2saif](https://gitlab.com/surfer-project/wave2saif)
@@ -59,13 +59,13 @@ Create or open a project, then click **Run** (or press **F5**).
 
 Verilog projects simulate with the bundled [xezim](https://github.com/aionhw/xezim) simulator **in-process** and write a `.vcd`. The sample is `samples/half_adder/half_adder.v` and `half_adder_tb.v`.
 
-VHDL projects run the bundled [yavs](https://github.com/ru551n/yavs) binary (`analyze`, then `run --tier=interp`) and write an `.fst`. The sample is `samples/half_adder_vhdl/half_adder.vhd` and `half_adder_tb.vhd`. yavs needs a C compiler when the IDE is built, because its VHPI shim is compiled from C.
+VHDL projects run the bundled [yavs](https://github.com/ru551n/yavs) binary (`analyze`, then `run --tier=interp`) and write an `.fst`. Wellen then reads that FST and writes a `.vcd` with the same name. Run opens the `.vcd`. The `.fst` stays in the project. The sample is `samples/half_adder_vhdl/half_adder.vhd` and `half_adder_tb.vhd`. yavs needs a C compiler when the IDE is built, because its VHPI shim is compiled from C.
 
 ## Waveforms (Surfer / wellen)
 
 [Surfer](https://gitlab.com/surfer-project/surfer) is vendored at `vendor/surfer` (`v0.7.0`). Its parser, [wellen](https://github.com/ekiwi/wellen), is a Cargo dependency and is compiled with the rest of the crate.
 
-Open a `.vcd`, `.fst`, or `.ghw` file, then use **Text** or **Wave** on the right of the tab bar (or **View**). Wave draws traces in the editor pane (scroll to zoom, drag to pan, click to place a cursor). **Run** opens the new dump as a waveform.
+Open a `.vcd`, `.fst`, or `.ghw` file, then use **Text** or **Wave** on the right of the tab bar (or **View**). Wave draws traces in the editor pane (scroll to zoom, drag to pan, click to place a cursor). **Run** opens the new `.vcd` as a waveform.
 
 ## VCD tools
 
@@ -92,7 +92,8 @@ cargo run --release
 ```
 src/              Rust IDE sources (iced)
 src/sim.rs        in-process xezim runner (VCD)
-src/vhdl_sim.rs   yavs subprocess runner (FST)
+src/vhdl_sim.rs   yavs subprocess runner (FST, then VCD)
+src/fst_to_vcd.rs wellen FST-to-VCD conversion
 src/waveform.rs   Surfer/wellen waveform pane
 vendor/xezim      Vendored [xezim](https://github.com/aionhw/xezim) (no git fetch)
 vendor/xezim-core Vendored xezim-core (xezim path/patch dep)

@@ -4,6 +4,7 @@
 
 mod app;
 mod editor;
+mod fst_to_vcd;
 mod icons;
 mod language;
 mod project;
