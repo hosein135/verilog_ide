@@ -27,15 +27,15 @@ What `run.sh` does:
 
 1. Install missing **git** and **curl** with the distro package manager (a static curl binary if that cannot run)
 2. Check free disk space, repair the git work tree, and install pinned **Nix 2.28.5** when the current Nix is missing or a different version
-3. Enter a **nixpkgs 25.05** dev shell from `devops/flake.nix` (Rust **1.92.0**, iced, xezim, yavs, and wellen/Surfer build deps)
+3. Enter a **nixpkgs 25.05** dev shell from `devops/flake.nix` (Rust **1.98.0**, iced, xezim, yavs, and wellen/Surfer build deps)
 4. Cache the Nix environment under `~/.cache/verilog-ide/` for fast later runs
 5. `cargo run` the IDE inside that shell
 
 ## Reproducibility
 
-- **Nix**: `devops/flake.lock` pins nixpkgs and rust-overlay; the shell uses Rust **1.92.0** exactly
+- **Nix**: `devops/flake.lock` pins nixpkgs and rust-overlay; the shell uses Rust **1.98.0** exactly
 - **Cargo**: committed `Cargo.lock` pins crates.io; xezim, yavs, Surfer, vcd-anon, and wave2saif are vendored under `vendor/` so `cargo build` does not fetch their git repos. `build.rs` compiles the yavs binary into `vendor/yavs/target`
-- **Toolchain file**: `rust-toolchain.toml` selects 1.92.0 for rustup-based builds outside Nix
+- **Toolchain file**: `rust-toolchain.toml` selects 1.98.0 for rustup-based builds outside Nix. Vendored yavs needs Rust 1.95 or newer (`if let` guards and `Atomic::try_update`)
 
 Useful flags:
 
@@ -105,7 +105,7 @@ samples/half_adder_vhdl  VHDL half adder and testbench
 assets/           Application icon
 scripts/host-prep.sh  Git, disk, and Nix preflight used by run.sh
 Cargo.lock        Pinned Rust crate graph
-rust-toolchain.toml  Rust 1.92.0 (rustup)
+rust-toolchain.toml  Rust 1.98.0 (rustup)
 devops/flake.nix  Nix dev shell (nixpkgs 25.05)
 devops/flake.lock Pinned Nix inputs
 run.sh            Bootstrap Nix + run inside flake env

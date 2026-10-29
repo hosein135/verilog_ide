@@ -2,7 +2,7 @@
 name = "verilog-ide"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.92"
+rust-version = "1.95"
 description = "Desktop IDE for Verilog and VHDL"
 license = "MIT"
 authors = ["Verilog IDE"]

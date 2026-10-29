@@ -29,8 +29,10 @@
             overlays = [ (import rust-overlay) ];
           };
           # xezim (vendored at vendor/xezim) requires rustc 1.92+.
-          # yavs (vendored at vendor/yavs) is compiled by build.rs and needs clang for its VHPI shim.
-          rustToolchain = pkgs.rust-bin.stable."1.92.0".default;
+          # yavs (vendored at vendor/yavs) requires rustc 1.95+ for if-let guards
+          # and Atomic::try_update. 1.98.0 is the newest stable in the pinned rust-overlay.
+          # yavs is compiled by build.rs and needs clang for its VHPI shim.
+          rustToolchain = pkgs.rust-bin.stable."1.98.0".default;
           linuxRuntimeLibs = pkgs.lib.optionals pkgs.stdenv.isLinux [
             pkgs.libxkbcommon
             pkgs.fontconfig
